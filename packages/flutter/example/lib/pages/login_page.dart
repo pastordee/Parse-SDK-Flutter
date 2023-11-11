@@ -1,5 +1,3 @@
-// ignore_for_file: avoid_print
-
 import 'package:flutter/material.dart';
 import 'package:flutter_plugin_example/data/model/user.dart';
 import 'package:parse_server_sdk_flutter/parse_server_sdk_flutter.dart';
@@ -100,20 +98,17 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async => false,
-      child: Scaffold(
-          appBar: AppBar(
-            automaticallyImplyLeading: false,
-            title: const Text('Parse Server demo'),
-          ),
-          body: Stack(
-            children: <Widget>[
-              _showBody(),
-              _showCircularProgress(),
-            ],
-          )),
-    );
+    return Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          title: const Text('Parse Server demo'),
+        ),
+        body: Stack(
+          children: <Widget>[
+            _showBody(),
+            _showCircularProgress(),
+          ],
+        ));
   }
 
   Widget _showCircularProgress() {

@@ -1,10 +1,13 @@
 part of flutter_parse_sdk_flutter;
 
+/// A class that provides a mechanism for handling push notifications in the app.
 class ParsePush {
   static final ParsePush instance = ParsePush._internal();
 
   static String keyType = "gcm";
   static String keyPushType = 'pushType';
+
+  late ParseNotification _parseNotification;
 
   factory ParsePush() {
     return instance;
@@ -16,7 +19,10 @@ class ParsePush {
   Future<void> initialize(
     firebaseMessaging, {
     String? vapidKey,
+    required ParseNotification parseNotification,
   }) async {
+    _parseNotification = parseNotification;
+
     // Get Google Cloud Messaging (GCM) token
     firebaseMessaging
         .getToken(vapidKey: vapidKey)
@@ -48,6 +54,7 @@ class ParsePush {
     _handlePush(pushId, timestamp, channel, data);
   }
 
+  /// Processes the incoming push notification message.
   void _handlePush(String pushId, String timestamp, String channel,
       Map<String, dynamic>? data) {
     if (pushId.isEmpty || timestamp.isEmpty) {
@@ -56,7 +63,7 @@ class ParsePush {
 
     if (data != null) {
       // Show push notification
-      ParseNotification.instance.showNotification(data["alert"]);
+      _parseNotification.showNotification(data["alert"]);
     }
   }
 
