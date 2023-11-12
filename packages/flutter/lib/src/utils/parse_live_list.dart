@@ -282,8 +282,8 @@ class _ParseLiveListElementWidgetState<T extends sdk.ParseObject>
   Widget build(BuildContext context) {
     final Widget result = SizeTransition(
       sizeFactor: widget.sizeFactor,
-      child: AnimatedSize(
-        duration: widget.duration,
+      child: Container(
+        // duration: widget.duration,
         child: widget.childBuilder(context, _snapshot),
       ),
     );
