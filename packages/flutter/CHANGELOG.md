@@ -1,3 +1,47 @@
+## [7.0.1](https://github.com/parse-community/Parse-SDK-Flutter/compare/flutter-7.0.0...flutter-7.0.1) (2024-02-03)
+
+### Bug Fixes
+
+* Conflict with new version of `connectivity_plus` dependency ([#987](https://github.com/parse-community/Parse-SDK-Flutter/pull/987))
+
+## [7.0.0](https://github.com/parse-community/Parse-SDK-Flutter/compare/flutter-6.0.0...flutter-7.0.0) (2023-10-16)
+
+### BREAKING CHANGES
+
+* This release removes support for Flutter 3.0 ([#971](https://github.com/parse-community/Parse-SDK-Flutter/pull/971))
+
+### Features
+
+* Add support for Flutter 3.10 and 3.13, remove support for Flutter 3.0 ([#971](https://github.com/parse-community/Parse-SDK-Flutter/pull/971))
+
+## [6.0.0](https://github.com/parse-community/Parse-SDK-Flutter/compare/flutter-5.1.2...flutter-6.0.0) (2023-08-06)
+
+### BREAKING CHANGES
+
+* The push notification library flutter_local_notifications is replaced with the new push notification interface `ParseNotification` ([#949](https://github.com/parse-community/Parse-SDK-Flutter/pull/949))
+
+### Features
+
+* Add new new push notification interface `ParseNotification` for managing push notifications ([#949](https://github.com/parse-community/Parse-SDK-Flutter/pull/949))
+
+## [5.1.2](https://github.com/parse-community/Parse-SDK-Flutter/compare/flutter-5.1.1...flutter-5.1.2) (2023-07-11)
+
+### Bug Fixes
+
+* Building web app fails because `dbDirectory` does not exist in `core_store_directory_web` ([#948](https://github.com/parse-community/Parse-SDK-Flutter/pull/948))
+
+## [5.1.1](https://github.com/parse-community/Parse-SDK-Flutter/compare/flutter-5.1.0...flutter-5.1.1) (2023-06-28)
+
+### Bug Fixes
+
+* Push notifications in iOS not working; this changes the dependency in `ParseNotification` from `awesome_notifications` to `flutter_local_notifications` ([#940](https://github.com/parse-community/Parse-SDK-Flutter/pull/940))
+
+## [5.1.0](https://github.com/parse-community/Parse-SDK-Flutter/compare/flutter-5.0.1...flutter-5.1.0) (2023-05-22)
+
+### Features
+
+* Add support for push notifications via `ParsePush`, `ParseNotification` ([#914](https://github.com/parse-community/Parse-SDK-Flutter/pull/914))
+
 ## [5.0.1](https://github.com/parse-community/Parse-SDK-Flutter/compare/flutter-5.0.0...flutter-5.0.1) (2023-05-20)
 
 ### Bug Fixes
