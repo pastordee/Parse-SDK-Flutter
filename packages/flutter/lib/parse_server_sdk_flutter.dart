@@ -109,56 +109,29 @@ class Parse extends sdk.Parse
 
   @override
   Future<sdk.ParseConnectivityResult> checkConnectivity() async {
-    final List<ConnectivityResult> connectivityResult = await (Connectivity().checkConnectivity());
-    if (connectivityResult.contains(ConnectivityResult.mobile)) {
-        return sdk.ParseConnectivityResult.mobile;
-          // Mobile network available.
-        } else if (connectivityResult.contains(ConnectivityResult.wifi)) {
+    switch (await Connectivity().checkConnectivity()) {
+      case ConnectivityResult.wifi:
         return sdk.ParseConnectivityResult.wifi;
-          
-          // Connected to a network which is not in the above mentioned networks.
-        } else if (connectivityResult.contains(ConnectivityResult.none)) {
-          return sdk.ParseConnectivityResult.none;
-          // No available network types
-        }else{
-          return sdk.ParseConnectivityResult.none;
-        }
-    // switch (await Connectivity().checkConnectivity()) {
-    //   case ConnectivityResult.wifi:
-    //     return sdk.ParseConnectivityResult.wifi;
-    //   case ConnectivityResult.mobile:
-    //     return sdk.ParseConnectivityResult.mobile;
-    //   case ConnectivityResult.none:
-    //     return sdk.ParseConnectivityResult.none;
-    //   default:
-    //     return sdk.ParseConnectivityResult.wifi;
-    // }
+      case ConnectivityResult.mobile:
+        return sdk.ParseConnectivityResult.mobile;
+      case ConnectivityResult.none:
+        return sdk.ParseConnectivityResult.none;
+      default:
+        return sdk.ParseConnectivityResult.wifi;
+    }
   }
 
   @override
   Stream<sdk.ParseConnectivityResult> get connectivityStream {
-    return Connectivity().onConnectivityChanged.map((List<ConnectivityResult> event) {
-      if (event.contains(ConnectivityResult.mobile)) {
-        return sdk.ParseConnectivityResult.mobile;
-          // Mobile network available.
-        } else if (event.contains(ConnectivityResult.wifi)) {
-        return sdk.ParseConnectivityResult.wifi;
-          
-          // Connected to a network which is not in the above mentioned networks.
-        } else if (event.contains(ConnectivityResult.none)) {
+    return Connectivity().onConnectivityChanged.map((ConnectivityResult event) {
+      switch (event) {
+        case ConnectivityResult.wifi:
+          return sdk.ParseConnectivityResult.wifi;
+        case ConnectivityResult.mobile:
+          return sdk.ParseConnectivityResult.mobile;
+        default:
           return sdk.ParseConnectivityResult.none;
-          // No available network types
-        }else{
-          return sdk.ParseConnectivityResult.none;
-        }
-      // switch (event) {
-      //   case event.contains(ConnectivityResult.mobile):
-      //     return sdk.ParseConnectivityResult.wifi;
-      //   case ConnectivityResult.mobile:
-      //     return sdk.ParseConnectivityResult.mobile;
-      //   default:
-      //     return sdk.ParseConnectivityResult.none;
-      // }
+      }
     });
   }
 
