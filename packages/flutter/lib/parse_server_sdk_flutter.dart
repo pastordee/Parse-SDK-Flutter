@@ -1,4 +1,4 @@
-library flutter_parse_sdk_flutter;
+library;
 
 import 'dart:convert';
 import 'dart:async';
@@ -19,10 +19,15 @@ export 'package:parse_server_sdk/parse_server_sdk.dart'
     hide Parse, CoreStoreSembastImp;
 
 part 'src/storage/core_store_shared_preferences.dart';
+
 part 'src/storage/core_store_sembast.dart';
+
 part 'src/utils/parse_live_grid.dart';
+
 part 'src/utils/parse_live_list.dart';
+
 part 'src/notification/parse_notification.dart';
+
 part 'src/push//parse_push.dart';
 
 class Parse extends sdk.Parse
@@ -109,6 +114,7 @@ class Parse extends sdk.Parse
 
   @override
   Future<sdk.ParseConnectivityResult> checkConnectivity() async {
+<<<<<<< HEAD
      final List<ConnectivityResult> connectivityResult = await (Connectivity().checkConnectivity());
     if (connectivityResult.contains(ConnectivityResult.mobile)) {
         return sdk.ParseConnectivityResult.mobile;
@@ -135,10 +141,22 @@ class Parse extends sdk.Parse
     //   default:
     //     return sdk.ParseConnectivityResult.wifi;
     // }
+=======
+    List<ConnectivityResult> list = await Connectivity().checkConnectivity();
+
+    if (list.contains(ConnectivityResult.wifi)) {
+      return sdk.ParseConnectivityResult.wifi;
+    } else if (list.contains(ConnectivityResult.mobile)) {
+      return sdk.ParseConnectivityResult.mobile;
+    } else {
+      return sdk.ParseConnectivityResult.none;
+    }
+>>>>>>> upstream/master
   }
 
   @override
   Stream<sdk.ParseConnectivityResult> get connectivityStream {
+<<<<<<< HEAD
     return Connectivity().onConnectivityChanged.map((List<ConnectivityResult> event) {
       if (event.contains(ConnectivityResult.mobile)) {
         return sdk.ParseConnectivityResult.mobile;
@@ -164,6 +182,19 @@ class Parse extends sdk.Parse
     //       return sdk.ParseConnectivityResult.none;
     //   }
     // });
+=======
+    return Connectivity().onConnectivityChanged.map(
+      (List<ConnectivityResult> event) {
+        if (event.contains(ConnectivityResult.wifi)) {
+          return sdk.ParseConnectivityResult.wifi;
+        } else if (event.contains(ConnectivityResult.mobile)) {
+          return sdk.ParseConnectivityResult.mobile;
+        } else {
+          return sdk.ParseConnectivityResult.none;
+        }
+      },
+    );
+>>>>>>> upstream/master
   }
 
   @override
