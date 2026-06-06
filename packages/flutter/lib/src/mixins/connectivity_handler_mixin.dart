@@ -105,12 +105,11 @@ mixin ConnectivityHandlerMixin<T extends StatefulWidget> on State<T> {
     final previousStatus = _connectionStatus;
     _connectionStatus = result; // Update current status
 
-    // Determine current and previous online state
+    // Determine current and previous online state.
+    // ConnectivityResult.other covers ethernet, VPN, hotspot — treat as online.
     bool wasOnline =
         previousStatus != null && previousStatus != ConnectivityResult.none;
-    bool isOnline =
-        result == ConnectivityResult.mobile ||
-        result == ConnectivityResult.wifi;
+    bool isOnline = result != ConnectivityResult.none;
 
     // --- Handle State Transitions ---
     if (isOnline && !wasOnline) {

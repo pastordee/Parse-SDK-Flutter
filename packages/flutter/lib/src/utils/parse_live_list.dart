@@ -303,7 +303,8 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
           try {
             // Wrap event processing in try-catch
             if (event is sdk.ParseLiveListAddEvent<sdk.ParseObject>) {
-              final addedItem = event.object;
+              // Cast to T — stream events carry ParseObject but _items is List<T>
+              final addedItem = event.object as T;
               setState(() {
                 _items.insert(event.index, addedItem);
               });
@@ -313,7 +314,6 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                 final removedItem = _items.removeAt(event.index);
                 setState(() {});
                 if (widget.offlineMode) {
-                  // Remove deleted item from cache immediately
                   removedItem.removeFromLocalCache().catchError((e) {
                     debugPrint(
                       '$connectivityLogPrefix Error removing item ${removedItem.objectId} from cache: $e',
@@ -326,7 +326,8 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                 );
               }
             } else if (event is sdk.ParseLiveListUpdateEvent<sdk.ParseObject>) {
-              final updatedItem = event.object;
+              // Cast to T — same reason as AddEvent above
+              final updatedItem = event.object as T;
               if (event.index >= 0 && event.index < _items.length) {
                 setState(() {
                   _items[event.index] = updatedItem;

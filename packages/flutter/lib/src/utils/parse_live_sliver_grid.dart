@@ -396,7 +396,7 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
 
           try {
             if (event is sdk.ParseLiveListAddEvent<sdk.ParseObject>) {
-              final addedItem = event.object;
+              final addedItem = event.object as T;
               setState(() {
                 _items.insert(event.index, addedItem);
               });
@@ -414,7 +414,7 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
                 }
               }
             } else if (event is sdk.ParseLiveListUpdateEvent<sdk.ParseObject>) {
-              final updatedItem = event.object;
+              final updatedItem = event.object as T;
               if (event.index >= 0 && event.index < _items.length) {
                 setState(() {
                   _items[event.index] = updatedItem;
