@@ -9,7 +9,7 @@ extension ParseObjectOffline on ParseObject {
     final String cacheKey = 'offline_cache_$parseClassName';
     final Map<String, String> map = await _loadMap(store, cacheKey);
     if (objectId == null) {
-      debugPrint(
+      print(
         'ParseObjectOffline.saveToLocalCache: skipping object with no objectId '
         'for $parseClassName',
       );
@@ -17,7 +17,7 @@ extension ParseObjectOffline on ParseObject {
     }
     map[objectId!] = json.encode(toJson(full: true));
     await _saveMap(store, cacheKey, map);
-    debugPrint(
+    print(
       'ParseObjectOffline: saved $objectId to cache for $parseClassName',
     );
   }
@@ -30,7 +30,7 @@ extension ParseObjectOffline on ParseObject {
     final Map<String, String> map = await _loadMap(store, cacheKey);
     if (map.remove(objectId) != null) {
       await _saveMap(store, cacheKey, map);
-      debugPrint(
+      print(
         'ParseObjectOffline: removed $objectId from cache for $parseClassName',
       );
     }
@@ -52,12 +52,12 @@ extension ParseObjectOffline on ParseObject {
       obj.addAll(updates);
       map[objectId!] = json.encode(obj);
       await _saveMap(store, cacheKey, map);
-      debugPrint(
+      print(
         'ParseObjectOffline: updated $objectId in cache for $parseClassName',
       );
       return true;
     } catch (e) {
-      debugPrint(
+      print(
         'ParseObjectOffline.updateInLocalCache: error for $objectId: $e',
       );
       return false;
@@ -80,7 +80,7 @@ extension ParseObjectOffline on ParseObject {
       return ParseObject(className)
           .fromJson(json.decode(raw) as Map<String, dynamic>);
     } catch (e) {
-      debugPrint(
+      print(
         'ParseObjectOffline.loadFromLocalCache: corrupt entry for $objectId '
         'in $className — $e',
       );
@@ -103,13 +103,13 @@ extension ParseObjectOffline on ParseObject {
               .fromJson(json.decode(entry.value) as Map<String, dynamic>),
         );
       } catch (e) {
-        debugPrint(
+        print(
           'ParseObjectOffline.loadAllFromLocalCache: skipping corrupt entry '
           '${entry.key} for $className — $e',
         );
       }
     }
-    debugPrint(
+    print(
       'ParseObjectOffline: loaded ${results.length} objects from cache for '
       '$className',
     );
@@ -131,7 +131,7 @@ extension ParseObjectOffline on ParseObject {
     for (final obj in objects) {
       final id = obj.objectId;
       if (id == null) {
-        debugPrint(
+        print(
           'ParseObjectOffline.saveAllToLocalCache: skipping object without '
           'objectId for $className',
         );
@@ -142,7 +142,7 @@ extension ParseObjectOffline on ParseObject {
     }
 
     await _saveMap(store, cacheKey, map);
-    debugPrint(
+    print(
       'ParseObjectOffline: batch saved to $className. '
       'Added: $added, Updated: $updated, Total: ${map.length}',
     );
@@ -173,7 +173,7 @@ extension ParseObjectOffline on ParseObject {
   static Future<void> clearLocalCacheForClass(String className) async {
     final CoreStore store = ParseCoreData().getStore();
     await store.remove('offline_cache_$className');
-    debugPrint('ParseObjectOffline: cleared cache for $className');
+    print('ParseObjectOffline: cleared cache for $className');
   }
 
   /// Sync: pushes every cached object to the server.
@@ -197,13 +197,13 @@ extension ParseObjectOffline on ParseObject {
       if (response.success) {
         synced++;
       } else {
-        debugPrint(
+        print(
           'ParseObjectOffline.syncLocalCacheWithServer: failed to save '
           '${obj.objectId} — ${response.error?.message}',
         );
       }
     }
-    debugPrint(
+    print(
       'ParseObjectOffline: sync complete for $className. '
       'Synced: $synced, Skipped: $skipped',
     );
@@ -242,7 +242,7 @@ extension ParseObjectOffline on ParseObject {
       // Write migrated data in new format and remove old list.
       await store.setString('${cacheKey}_v2', json.encode(migrated));
       await store.remove(cacheKey);
-      debugPrint(
+      print(
         'ParseObjectOffline: migrated ${migrated.length} entries from list '
         'format to map format for $cacheKey',
       );
