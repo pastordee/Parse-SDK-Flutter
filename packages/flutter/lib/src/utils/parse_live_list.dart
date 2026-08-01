@@ -280,6 +280,18 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
       debugPrint(
         '$connectivityLogPrefix Loaded ${loaded.length} items from cache for ${widget.query.object.parseClassName}',
       );
+      // Diagnostic: show the order limiter used and the first few rows so it's
+      // clear whether the newest items are in the cache and sorted to the top.
+      if (loaded.isNotEmpty) {
+        final Object? orderLimiter = widget.query.limiters['order'];
+        final preview = loaded
+            .take(3)
+            .map((e) => '${e.objectId}@${(e).createdAt?.toIso8601String()}')
+            .join(', ');
+        debugPrint(
+          '$connectivityLogPrefix Cache order="$orderLimiter" top3=[$preview]',
+        );
+      }
     } catch (e) {
       debugPrint('$connectivityLogPrefix Error loading data from cache: $e');
     }
