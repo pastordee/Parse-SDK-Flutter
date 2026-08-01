@@ -156,7 +156,8 @@ extension ParseObjectOffline on ParseObject {
       } catch (e) {
         failed++;
         print(
-          'ParseObjectOffline.saveAllToLocalCache: skipping object $id for '
+          'ParseObjectOffline.saveAllToLocalCache: skipping object $id '
+          '(createdAt=${obj.createdAt?.toIso8601String()}) for '
           '$className — encode failed: $e',
         );
       }

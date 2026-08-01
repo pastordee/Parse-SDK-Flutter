@@ -380,6 +380,7 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
       // cached rows shown above are replaced without a blank frame (same
       // objectIds keep their element/scroll position via the ValueKey).
       final List<T> serverItems = <T>[];
+      int nullPreloaded = 0;
       if (liveList.size > 0) {
         for (int i = 0; i < liveList.size; i++) {
           // Use preLoaded data for initial display speed
@@ -390,8 +391,26 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
             if (widget.offlineMode) {
               itemsToCacheBatch.add(item);
             }
+          } else {
+            // Lazy loading: an index outside the preload window returns null and
+            // gets dropped from BOTH the display list and the cache batch.
+            nullPreloaded++;
           }
         }
+      }
+      // Diagnostic: compare server results to the cache. If serverTop3 shows
+      // recent items that the cache top3 lacks, the batch save is dropping them
+      // (nullPreloaded > 0 points at the lazy preload window as the cause).
+      if (widget.offlineMode) {
+        final serverPreview = serverItems
+            .take(3)
+            .map((e) => '${e.objectId}@${e.createdAt?.toIso8601String()}')
+            .join(', ');
+        debugPrint(
+          '$connectivityLogPrefix Server liveList.size=${liveList.size} '
+          'nonNull=${serverItems.length} nullPreloaded=$nullPreloaded '
+          'toCache=${itemsToCacheBatch.length} serverTop3=[$serverPreview]',
+        );
       }
 
       // --- Update UI FIRST ---
