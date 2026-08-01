@@ -107,6 +107,7 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
     this.paginationLoadingElement,
     this.footerBuilder,
     this.loadMoreOffset = 200.0,
+    this.preloadItemThreshold = 5,
     this.cacheSize = 50,
     this.offlineMode = false,
     this.cacheFilter,
@@ -142,6 +143,12 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
   final Widget? paginationLoadingElement;
   final FooterBuilder? footerBuilder;
   final double loadMoreOffset;
+
+  /// How many items from the end of the list to begin prefetching the next page.
+  /// Index-based (item-height-independent) so infinite scroll stays smooth: as
+  /// soon as an item within this many rows of the end is built, the next page
+  /// starts loading in the background instead of waiting until the very bottom.
+  final int preloadItemThreshold;
   final int pageSize;
   final int nonPaginatedLimit;
   final int cacheSize;
@@ -792,6 +799,20 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                     shrinkWrap: widget.shrinkWrap,
                     itemCount: _items.length,
                     itemBuilder: (context, index) {
+                      // Index-based prefetch: start loading the next page as soon
+                      // as an item within [preloadItemThreshold] of the end is
+                      // built, so the user never scrolls into a blank/stutter
+                      // waiting for the next page. Deferred to after this frame
+                      // since _loadMoreData calls setState.
+                      if (widget.pagination &&
+                          _hasMoreData &&
+                          _loadMoreStatus != LoadMoreStatus.loading &&
+                          index >=
+                              _items.length - widget.preloadItemThreshold) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) _loadMoreData();
+                        });
+                      }
                       final item = _items[index];
                       StreamGetter<T>? itemStream;
                       DataGetter<T>? loadedData;
