@@ -21,6 +21,64 @@ enum LoadMoreStatus { idle, loading, noMoreData, error }
 typedef FooterBuilder =
     Widget Function(BuildContext context, LoadMoreStatus loadMoreStatus);
 
+/// Builds a [Comparator] from a query's `order` limiter (e.g. `-createdAt` or
+/// `runCount,-createdAt`) so cached rows render in the SAME order as the server
+/// query while offline. The offline store is an unordered map, so without this
+/// a newly-cached item (inserted last) sinks to the bottom of the list until the
+/// server load re-sorts — which reads as "the new item isn't cached".
+///
+/// Returns null when the query has no usable `order` limiter, in which case the
+/// caller should leave the cached order as-is.
+Comparator<T>? cacheOrderComparatorFromQuery<T extends sdk.ParseObject>(
+  sdk.QueryBuilder query,
+) {
+  final Object? orderRaw = query.limiters['order'];
+  if (orderRaw is! String || orderRaw.isEmpty) return null;
+  final List<String> keys =
+      orderRaw.split(',').where((String k) => k.isNotEmpty).toList();
+  if (keys.isEmpty) return null;
+  return (T a, T b) {
+    for (final String rawKey in keys) {
+      final bool descending = rawKey.startsWith('-');
+      final String key = descending ? rawKey.substring(1) : rawKey;
+      final Object? av = _orderFieldValue(a, key);
+      final Object? bv = _orderFieldValue(b, key);
+      int cmp;
+      if (av == null && bv == null) {
+        cmp = 0;
+      } else if (av == null) {
+        cmp = -1; // nulls sort first (ascending); flipped below when descending
+      } else if (bv == null) {
+        cmp = 1;
+      } else if (av is Comparable && bv is Comparable) {
+        try {
+          cmp = Comparable.compare(av, bv);
+        } catch (_) {
+          cmp = 0; // incomparable types — treat as equal
+        }
+      } else {
+        cmp = 0;
+      }
+      if (cmp != 0) return descending ? -cmp : cmp;
+    }
+    return 0;
+  };
+}
+
+/// Reads the value used for offline ordering. `createdAt`/`updatedAt` come from
+/// the object's timestamp getters (not stored in the field map); everything else
+/// is read from the field map.
+Object? _orderFieldValue(sdk.ParseObject obj, String key) {
+  switch (key) {
+    case 'createdAt':
+      return obj.createdAt;
+    case 'updatedAt':
+      return obj.updatedAt;
+    default:
+      return obj.get<Object?>(key);
+  }
+}
+
 /// A widget that displays a live list of Parse objects.
 class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
   const ParseLiveListWidget({
@@ -44,13 +102,15 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
     this.preloadedColumns,
     this.excludedColumns,
     this.pagination = false,
-    this.pageSize = 20,
+    this.pageSize = 100,
     this.nonPaginatedLimit = 1000,
     this.paginationLoadingElement,
     this.footerBuilder,
     this.loadMoreOffset = 200.0,
     this.cacheSize = 50,
     this.offlineMode = false,
+    this.cacheFilter,
+    this.cacheComparator,
     required this.fromJson,
   });
 
@@ -86,6 +146,17 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
   final int nonPaginatedLimit;
   final int cacheSize;
   final bool offlineMode;
+
+  /// Optional predicate to scope offline-cached items to this query. The offline
+  /// store keeps one bucket per class, so a per-query list (e.g. one chat
+  /// conversation) must pass this or it would render unrelated cached rows.
+  /// Applied inside [ParseObjectOffline.loadAllFromLocalCache].
+  final bool Function(sdk.ParseObject object)? cacheFilter;
+
+  /// Optional comparator to order offline-cached items to match the query's sort
+  /// (the offline store has no inherent order). Applied only to the cached
+  /// render; the subsequent server load reconciles the final order.
+  final int Function(T a, T b)? cacheComparator;
 
   final T Function(Map<String, dynamic> json) fromJson;
 
@@ -176,28 +247,46 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
     }
 
     debugPrint('$connectivityLogPrefix Loading data from cache...');
-    _items.clear();
 
+    final List<T> loaded = <T>[];
     try {
+      // Scope to this query via cacheFilter so a per-conversation list doesn't
+      // pull in every cached object of the class.
       final cached = await ParseObjectOffline.loadAllFromLocalCache(
         widget.query.object.parseClassName,
+        where: widget.cacheFilter,
       );
       for (final obj in cached) {
         try {
-          _items.add(widget.fromJson(obj.toJson(full: true)));
+          loaded.add(widget.fromJson(obj.toJson(full: true)));
         } catch (e) {
           debugPrint(
             '$connectivityLogPrefix Error deserializing cached object: $e',
           );
         }
       }
+      // Order the cached render to match the query's sort (the store is
+      // unordered). The server load reconciles the final order shortly after.
+      if (widget.cacheComparator != null) {
+        loaded.sort(widget.cacheComparator);
+      } else {
+        // No explicit comparator — fall back to the query's own order so newly
+        // cached items land in their correct spot (e.g. -createdAt = newest on
+        // top) instead of at the bottom in cache-insertion order.
+        final Comparator<T>? auto =
+            cacheOrderComparatorFromQuery<T>(widget.query);
+        if (auto != null) loaded.sort(auto);
+      }
       debugPrint(
-        '$connectivityLogPrefix Loaded ${_items.length} items from cache for ${widget.query.object.parseClassName}',
+        '$connectivityLogPrefix Loaded ${loaded.length} items from cache for ${widget.query.object.parseClassName}',
       );
     } catch (e) {
       debugPrint('$connectivityLogPrefix Error loading data from cache: $e');
     }
 
+    _items
+      ..clear()
+      ..addAll(loaded);
     _noDataNotifier.value = _items.isEmpty;
     if (mounted) {
       setState(() {});
@@ -220,6 +309,14 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
     debugPrint('$connectivityLogPrefix Loading initial data from server...');
     List<T> itemsToCacheBatch = []; // Prepare list for batch caching
 
+    // OFFLINE-FIRST: render cached rows immediately (scoped via cacheFilter) so
+    // the list is populated while the server query runs in the background — no
+    // loading spinner or blank wait on entry. The server results below then
+    // reconcile (replace) these once they arrive.
+    if (widget.offlineMode && _items.isEmpty) {
+      await _loadFromCache();
+    }
+
     try {
       // Reset pagination and state
       if (widget.pagination) {
@@ -227,9 +324,12 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
         _loadMoreStatus = LoadMoreStatus.idle;
         _hasMoreData = true;
       }
-      _items.clear();
-      _noDataNotifier.value = true;
-      if (mounted) setState(() {}); // Show loading state immediately
+      // Keep cached rows on screen while fetching; only flip to the empty/
+      // loading state when there is nothing cached to show.
+      if (_items.isEmpty) {
+        _noDataNotifier.value = true;
+        if (mounted) setState(() {}); // Show loading state immediately
+      }
 
       // Prepare query
       final initialQuery = QueryBuilder<T>.copy(widget.query);
@@ -264,13 +364,16 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
       _liveList?.dispose(); // Dispose previous list if any
       _liveList = liveList;
 
-      // Populate _items directly from server data and collect for caching
+      // Build the fresh list from server, then swap it in atomically so the
+      // cached rows shown above are replaced without a blank frame (same
+      // objectIds keep their element/scroll position via the ValueKey).
+      final List<T> serverItems = <T>[];
       if (liveList.size > 0) {
         for (int i = 0; i < liveList.size; i++) {
           // Use preLoaded data for initial display speed
           final item = liveList.getPreLoadedAt(i);
           if (item != null) {
-            _items.add(item);
+            serverItems.add(item);
             // Add the item fetched from server to the cache batch if offline mode is on
             if (widget.offlineMode) {
               itemsToCacheBatch.add(item);
@@ -280,6 +383,9 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
       }
 
       // --- Update UI FIRST ---
+      _items
+        ..clear()
+        ..addAll(serverItems);
       _noDataNotifier.value = _items.isEmpty;
       if (mounted) {
         setState(() {}); // Display fetched items
@@ -519,11 +625,13 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
         '$connectivityLogPrefix LoadMore Response: Success=${parseResponse.success}, Count=${parseResponse.count}, Results=${parseResponse.results?.length}, Error: ${parseResponse.error?.message}',
       );
 
-      if (parseResponse.success && parseResponse.results != null) {
-        final List<dynamic> rawResults = parseResponse.results!;
-        final List<T> results = rawResults
-            .map((dynamic obj) => obj as T)
-            .toList();
+      if (parseResponse.success) {
+        // A SUCCESSFUL query at the end of the list is "no more data" (bounce
+        // off), NOT an error. Some SDK responses return results == null (rather
+        // than an empty list) at the boundary, which previously fell through to
+        // the error branch and showed "Error loading more items".
+        final List<T> results =
+            parseResponse.results?.cast<T>() ?? <T>[];
 
         if (results.isEmpty) {
           setState(() {
@@ -616,8 +724,11 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
     return ValueListenableBuilder<bool>(
       valueListenable: _noDataNotifier,
       builder: (context, noData, child) {
-        // Determine loading state: Only show if online AND _liveList is not yet initialized.
-        final bool showLoadingIndicator = !isOffline && _liveList == null;
+        // Determine loading state: only when online, the server list isn't ready
+        // yet AND there's nothing cached to show. With offline-first, cached rows
+        // render immediately (from _items) instead of a spinner.
+        final bool showLoadingIndicator =
+            !isOffline && _liveList == null && _items.isEmpty;
 
         if (showLoadingIndicator) {
           return widget.listLoadingElement ??
@@ -634,7 +745,14 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
               children: [
                 Expanded(
                   child: ListView.builder(
-                    physics: widget.scrollPhysics,
+                    // Default to bouncing overscroll so reaching either end of
+                    // the list springs back — a no-label "you're at the end"
+                    // signal (esp. after pagination stops). Callers can still
+                    // override via scrollPhysics.
+                    physics: widget.scrollPhysics ??
+                        const AlwaysScrollableScrollPhysics(
+                          parent: BouncingScrollPhysics(),
+                        ),
                     controller: _scrollController, // Use the state's controller
                     scrollDirection: widget.scrollDirection,
                     padding: widget.padding,
@@ -692,35 +810,20 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
     );
   }
 
-  // Builds the default footer based on the load more status
+  // Builds the default footer: a spinner ONLY while actively loading the next
+  // page. Reaching the end (noMoreData), errors, and idle all render nothing —
+  // the list just stops with no label, so the user sees the spinner and then it
+  // quietly disappears.
   Widget _buildDefaultFooter() {
-    switch (_loadMoreStatus) {
-      case LoadMoreStatus.loading:
-        return widget.paginationLoadingElement ??
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 16.0),
-              alignment: Alignment.center,
-              child: const CircularProgressIndicator(),
-            );
-      case LoadMoreStatus.noMoreData:
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          alignment: Alignment.center,
-          child: const Text("No more items to load"),
-        );
-      case LoadMoreStatus.error:
-        return InkWell(
-          onTap: _loadMoreData, // Allow retry on tap
-          child: Container(
+    if (_loadMoreStatus == LoadMoreStatus.loading) {
+      return widget.paginationLoadingElement ??
+          Container(
             padding: const EdgeInsets.symmetric(vertical: 16.0),
             alignment: Alignment.center,
-            child: const Text("Error loading more items. Tap to retry."),
-          ),
-        );
-      case LoadMoreStatus.idle:
-        // Return an empty container when idle or in default case
-        return const SizedBox.shrink();
+            child: const CircularProgressIndicator(),
+          );
     }
+    return const SizedBox.shrink();
   }
 
   @override

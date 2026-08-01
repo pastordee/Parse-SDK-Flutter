@@ -89,19 +89,27 @@ extension ParseObjectOffline on ParseObject {
   }
 
   /// Load all objects of a class from local storage.
+  /// Load every cached object of [className].
+  ///
+  /// The offline store holds one bucket per class, so callers that only want a
+  /// subset (e.g. the messages of ONE conversation) can pass [where] to filter
+  /// during the load — non-matching entries are skipped without being added to
+  /// the result. Without it, ALL cached objects of the class are returned.
   static Future<List<ParseObject>> loadAllFromLocalCache(
-    String className,
-  ) async {
+    String className, {
+    bool Function(ParseObject object)? where,
+  }) async {
     final CoreStore store = ParseCoreData().getStore();
     final Map<String, String> map =
         await _loadMap(store, 'offline_cache_$className');
     final List<ParseObject> results = [];
     for (final entry in map.entries) {
       try {
-        results.add(
-          ParseObject(className)
-              .fromJson(json.decode(entry.value) as Map<String, dynamic>),
-        );
+        final ParseObject object = ParseObject(className)
+            .fromJson(json.decode(entry.value) as Map<String, dynamic>);
+        if (where == null || where(object)) {
+          results.add(object);
+        }
       } catch (e) {
         print(
           'ParseObjectOffline.loadAllFromLocalCache: skipping corrupt entry '
@@ -111,7 +119,7 @@ extension ParseObjectOffline on ParseObject {
     }
     print(
       'ParseObjectOffline: loaded ${results.length} objects from cache for '
-      '$className',
+      '$className${where != null ? ' (filtered)' : ''}',
     );
     return results;
   }
@@ -128,6 +136,7 @@ extension ParseObjectOffline on ParseObject {
 
     int added = 0;
     int updated = 0;
+    int failed = 0;
     for (final obj in objects) {
       final id = obj.objectId;
       if (id == null) {
@@ -137,14 +146,26 @@ extension ParseObjectOffline on ParseObject {
         );
         continue;
       }
-      map.containsKey(id) ? updated++ : added++;
-      map[id] = json.encode(obj.toJson(full: true));
+      // Encode each object independently so one bad object (e.g. a value that
+      // fails to serialize) can't abort the whole batch and prevent every other
+      // item — including a freshly-added one — from being cached.
+      try {
+        final encoded = json.encode(obj.toJson(full: true));
+        map.containsKey(id) ? updated++ : added++;
+        map[id] = encoded;
+      } catch (e) {
+        failed++;
+        print(
+          'ParseObjectOffline.saveAllToLocalCache: skipping object $id for '
+          '$className — encode failed: $e',
+        );
+      }
     }
 
     await _saveMap(store, cacheKey, map);
     print(
       'ParseObjectOffline: batch saved to $className. '
-      'Added: $added, Updated: $updated, Total: ${map.length}',
+      'Added: $added, Updated: $updated, Failed: $failed, Total: ${map.length}',
     );
   }
 

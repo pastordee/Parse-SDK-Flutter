@@ -41,13 +41,15 @@ class ParseLiveSliverGridWidget<T extends sdk.ParseObject>
     this.mainAxisSpacing = 5.0,
     this.childAspectRatio = 0.80,
     this.pagination = false,
-    this.pageSize = 20,
+    this.pageSize = 100,
     this.nonPaginatedLimit = 1000,
     this.footerBuilder,
     this.cacheSize = 50,
     this.lazyBatchSize = 0,
     this.lazyTriggerOffset = 500.0,
     this.offlineMode = false,
+    this.cacheFilter,
+    this.cacheComparator,
     required this.fromJson,
   });
 
@@ -81,6 +83,14 @@ class ParseLiveSliverGridWidget<T extends sdk.ParseObject>
   final double lazyTriggerOffset;
 
   final bool offlineMode;
+
+  /// Scope offline-cached items to this query (the offline store keeps one
+  /// bucket per class); applied inside ParseObjectOffline.loadAllFromLocalCache.
+  final bool Function(sdk.ParseObject object)? cacheFilter;
+
+  /// Order offline-cached items to match the query sort; the server load
+  /// then reconciles the final order.
+  final int Function(T a, T b)? cacheComparator;
   final T Function(Map<String, dynamic> json) fromJson;
 
   @override
@@ -174,6 +184,7 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
     try {
       final cached = await ParseObjectOffline.loadAllFromLocalCache(
         widget.query.object.parseClassName,
+        where: widget.cacheFilter,
       );
       for (final obj in cached) {
         try {
@@ -183,6 +194,16 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
             '$connectivityLogPrefix Error deserializing cached object: $e',
           );
         }
+      }
+      if (widget.cacheComparator != null) {
+        _items.sort(widget.cacheComparator);
+      } else {
+        // No explicit comparator — fall back to the query's own order so newly
+        // cached items land in their correct spot (e.g. -createdAt = newest on
+        // top) instead of at the bottom in cache-insertion order.
+        final Comparator<T>? auto =
+            cacheOrderComparatorFromQuery<T>(widget.query);
+        if (auto != null) _items.sort(auto);
       }
       debugPrint(
         '$connectivityLogPrefix Loaded ${_items.length} items from cache for ${widget.query.object.parseClassName}',
@@ -263,11 +284,11 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
 
       final parseResponse = await nextPageQuery.query();
 
-      if (parseResponse.success && parseResponse.results != null) {
-        final List<dynamic> rawResults = parseResponse.results!;
-        final List<T> results = rawResults
-            .map((dynamic obj) => obj as T)
-            .toList();
+      if (parseResponse.success) {
+        // Success at the end of the list is "no more data" (handled below),
+        // NOT an error. Some SDK responses return results == null at the
+        // boundary, which previously fell through to the error branch.
+        final List<T> results = parseResponse.results?.cast<T>() ?? <T>[];
 
         if (results.isEmpty) {
           setState(() {
@@ -329,7 +350,13 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
       _hasMoreData = true;
       _items.clear();
       _loadingIndices.clear();
-      _noDataNotifier.value = true;
+      // OFFLINE-FIRST: seed from the cache so rows show immediately while the
+      // server query runs (the builder shows the loading indicator only when
+      // nothing is cached). Server results reconcile (swap) below.
+      if (widget.offlineMode) {
+        await _loadFromCache();
+      }
+      _noDataNotifier.value = _items.isEmpty;
       if (mounted) setState(() {});
 
       final initialQuery = QueryBuilder<T>.copy(widget.query);
@@ -363,11 +390,14 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
       _liveGrid?.dispose();
       _liveGrid = liveGrid;
 
+      // Build the fresh list from server, then swap it in atomically so any
+      // cached rows shown above are replaced without a blank frame.
+      final List<T> serverItems = <T>[];
       if (liveGrid.size > 0) {
         for (int i = 0; i < liveGrid.size; i++) {
           final item = liveGrid.getPreLoadedAt(i);
           if (item != null) {
-            _items.add(item);
+            serverItems.add(item);
             if (widget.offlineMode) {
               itemsToCacheBatch.add(item);
             }
@@ -375,6 +405,9 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
         }
       }
 
+      _items
+        ..clear()
+        ..addAll(serverItems);
       _noDataNotifier.value = _items.isEmpty;
       if (mounted) {
         setState(() {});
@@ -537,7 +570,7 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
     return ValueListenableBuilder<bool>(
       valueListenable: _noDataNotifier,
       builder: (context, noData, child) {
-        final bool showLoadingIndicator = !isOffline && _liveGrid == null;
+        final bool showLoadingIndicator = !isOffline && _liveGrid == null && _items.isEmpty;
 
         if (showLoadingIndicator) {
           return widget.gridLoadingElement != null

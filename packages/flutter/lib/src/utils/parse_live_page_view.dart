@@ -19,11 +19,13 @@ class ParseLiveListPageView<T extends sdk.ParseObject> extends StatefulWidget {
     this.preloadedColumns,
     this.excludedColumns,
     this.pagination = false,
-    this.pageSize = 20,
+    this.pageSize = 100,
     this.paginationThreshold = 3,
     this.loadingIndicator,
     this.cacheSize = 50,
     this.offlineMode = false, // Added offlineMode
+    this.cacheFilter,
+    this.cacheComparator,
     required this.fromJson, // Added fromJson
   });
 
@@ -52,6 +54,14 @@ class ParseLiveListPageView<T extends sdk.ParseObject> extends StatefulWidget {
 
   final int cacheSize;
   final bool offlineMode; // Added offlineMode
+
+  /// Scope offline-cached items to this query (the offline store keeps one
+  /// bucket per class); applied inside ParseObjectOffline.loadAllFromLocalCache.
+  final bool Function(sdk.ParseObject object)? cacheFilter;
+
+  /// Order offline-cached items to match the query sort; the server load
+  /// then reconciles the final order.
+  final int Function(T a, T b)? cacheComparator;
   final T Function(Map<String, dynamic> json) fromJson; // Added fromJson
 
   @override
@@ -143,6 +153,7 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
     try {
       final cached = await ParseObjectOffline.loadAllFromLocalCache(
         widget.query.object.parseClassName,
+        where: widget.cacheFilter,
       );
       for (final obj in cached) {
         try {
@@ -152,6 +163,16 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
             '$connectivityLogPrefix Error deserializing cached object: $e',
           );
         }
+      }
+      if (widget.cacheComparator != null) {
+        _items.sort(widget.cacheComparator);
+      } else {
+        // No explicit comparator — fall back to the query's own order so newly
+        // cached items land in their correct spot (e.g. -createdAt = newest on
+        // top) instead of at the bottom in cache-insertion order.
+        final Comparator<T>? auto =
+            cacheOrderComparatorFromQuery<T>(widget.query);
+        if (auto != null) _items.sort(auto);
       }
       debugPrint(
         '$connectivityLogPrefix Loaded ${_items.length} items from cache for ${widget.query.object.parseClassName}',
@@ -192,8 +213,14 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
       _currentPage = 0;
       _hasMoreData = true;
       _items.clear();
-      _noDataNotifier.value = true;
-      if (mounted) setState(() {}); // Show loading state
+      // OFFLINE-FIRST: seed from the cache so rows show immediately while the
+      // server query runs (the builder shows the loading indicator only when
+      // nothing is cached). Server results reconcile (swap) below.
+      if (widget.offlineMode) {
+        await _loadFromCache();
+      }
+      _noDataNotifier.value = _items.isEmpty;
+      if (mounted) setState(() {});
 
       // Prepare query
       final initialQuery = QueryBuilder<T>.copy(widget.query)
@@ -221,13 +248,14 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
       _liveList?.dispose(); // Dispose previous list if any
       _liveList = liveList;
 
-      // Populate _items directly from server data and collect for caching
+      // Build the fresh list from server, then swap it in atomically so any
+      // cached rows shown above are replaced without a blank frame.
+      final List<T> serverItems = <T>[];
       if (liveList.size > 0) {
         for (int i = 0; i < liveList.size; i++) {
           final item = liveList.getPreLoadedAt(i);
           if (item != null) {
-            _items.add(item);
-            // Add the item fetched from server to the cache batch if offline mode is on
+            serverItems.add(item);
             if (widget.offlineMode) {
               itemsToCacheBatch.add(item);
             }
@@ -236,6 +264,9 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
       }
 
       // --- Update UI FIRST ---
+      _items
+        ..clear()
+        ..addAll(serverItems);
       _noDataNotifier.value = _items.isEmpty;
       if (mounted) {
         setState(() {}); // Display fetched items
@@ -364,11 +395,11 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
         '$connectivityLogPrefix LoadMore Response: Success=${parseResponse.success}, Count=${parseResponse.count}, Results=${parseResponse.results?.length}, Error: ${parseResponse.error?.message}',
       );
 
-      if (parseResponse.success && parseResponse.results != null) {
-        final List<dynamic> rawResults = parseResponse.results!;
-        final List<T> results = rawResults
-            .map((dynamic obj) => obj as T)
-            .toList();
+      if (parseResponse.success) {
+        // Success at the end of the list is "no more data" (handled below),
+        // NOT an error. Some SDK responses return results == null at the
+        // boundary, which previously fell through to the error branch.
+        final List<T> results = parseResponse.results?.cast<T>() ?? <T>[];
 
         if (results.isEmpty) {
           setState(() {
@@ -569,7 +600,7 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
       valueListenable: _noDataNotifier,
       builder: (context, noData, child) {
         // Determine loading state: Online AND _liveList not yet initialized.
-        final bool showLoadingIndicator = !isOffline && _liveList == null;
+        final bool showLoadingIndicator = !isOffline && _liveList == null && _items.isEmpty;
 
         if (showLoadingIndicator) {
           return widget.listLoadingElement ??
@@ -588,7 +619,12 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
               PageView.builder(
                 controller: _pageController,
                 scrollDirection: widget.scrollDirection ?? Axis.horizontal,
-                physics: widget.scrollPhysics,
+                // Default to bouncing overscroll so reaching the first/last page
+                // springs back. Callers can override via scrollPhysics.
+                physics: widget.scrollPhysics ??
+                    const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
                 // Add 1 for loading indicator if paginating and more data exists
                 itemCount:
                     _items.length + (widget.pagination && _hasMoreData ? 1 : 0),

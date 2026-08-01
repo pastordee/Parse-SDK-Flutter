@@ -28,7 +28,7 @@ class ParseLiveGridWidget<T extends sdk.ParseObject> extends StatefulWidget {
     this.mainAxisSpacing = 5.0,
     this.childAspectRatio = 0.80,
     this.pagination = false,
-    this.pageSize = 20,
+    this.pageSize = 100,
     this.nonPaginatedLimit = 1000,
     this.loadMoreOffset = 300.0,
     this.footerBuilder,
@@ -36,6 +36,8 @@ class ParseLiveGridWidget<T extends sdk.ParseObject> extends StatefulWidget {
     this.lazyBatchSize = 0, // Note: Not currently used in state logic
     this.lazyTriggerOffset = 500.0, // Note: Not currently used in state logic
     this.offlineMode = false,
+    this.cacheFilter,
+    this.cacheComparator,
     required this.fromJson,
   });
 
@@ -80,6 +82,14 @@ class ParseLiveGridWidget<T extends sdk.ParseObject> extends StatefulWidget {
   final double lazyTriggerOffset;
 
   final bool offlineMode;
+
+  /// Scope offline-cached items to this query (the offline store keeps one
+  /// bucket per class); applied inside ParseObjectOffline.loadAllFromLocalCache.
+  final bool Function(sdk.ParseObject object)? cacheFilter;
+
+  /// Order offline-cached items to match the query sort; the server load
+  /// then reconciles the final order.
+  final int Function(T a, T b)? cacheComparator;
   final T Function(Map<String, dynamic> json) fromJson;
 
   @override
@@ -174,6 +184,7 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
     try {
       final cached = await ParseObjectOffline.loadAllFromLocalCache(
         widget.query.object.parseClassName,
+        where: widget.cacheFilter,
       );
       for (final obj in cached) {
         try {
@@ -183,6 +194,16 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
             '$connectivityLogPrefix Error deserializing cached object: $e',
           );
         }
+      }
+      if (widget.cacheComparator != null) {
+        _items.sort(widget.cacheComparator);
+      } else {
+        // No explicit comparator — fall back to the query's own order so newly
+        // cached items land in their correct spot (e.g. -createdAt = newest on
+        // top) instead of at the bottom in cache-insertion order.
+        final Comparator<T>? auto =
+            cacheOrderComparatorFromQuery<T>(widget.query);
+        if (auto != null) _items.sort(auto);
       }
       debugPrint(
         '$connectivityLogPrefix Loaded ${_items.length} items from cache for ${widget.query.object.parseClassName}',
@@ -318,11 +339,11 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
         '$connectivityLogPrefix LoadMore Response: Success=${parseResponse.success}, Count=${parseResponse.count}, Results=${parseResponse.results?.length}, Error: ${parseResponse.error?.message}',
       );
 
-      if (parseResponse.success && parseResponse.results != null) {
-        final List<dynamic> rawResults = parseResponse.results!;
-        final List<T> results = rawResults
-            .map((dynamic obj) => obj as T)
-            .toList();
+      if (parseResponse.success) {
+        // Success at the end of the list is "no more data" (handled below),
+        // NOT an error. Some SDK responses return results == null at the
+        // boundary, which previously fell through to the error branch.
+        final List<T> results = parseResponse.results?.cast<T>() ?? <T>[];
 
         if (results.isEmpty) {
           setState(() {
@@ -398,8 +419,14 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
       _hasMoreData = true;
       _items.clear();
       _loadingIndices.clear();
-      _noDataNotifier.value = true;
-      if (mounted) setState(() {}); // Show loading state
+      // OFFLINE-FIRST: seed from the cache so rows show immediately while the
+      // server query runs (the builder shows the loading indicator only when
+      // nothing is cached). Server results reconcile (swap) below.
+      if (widget.offlineMode) {
+        await _loadFromCache();
+      }
+      _noDataNotifier.value = _items.isEmpty;
+      if (mounted) setState(() {});
 
       // Prepare query
       final initialQuery = QueryBuilder<T>.copy(widget.query);
@@ -434,13 +461,14 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
       _liveGrid?.dispose(); // Dispose previous list if any
       _liveGrid = liveGrid;
 
-      // Populate _items directly from server data and collect for caching
+      // Build the fresh list from server, then swap it in atomically so any
+      // cached rows shown above are replaced without a blank frame.
+      final List<T> serverItems = <T>[];
       if (liveGrid.size > 0) {
         for (int i = 0; i < liveGrid.size; i++) {
           final item = liveGrid.getPreLoadedAt(i);
           if (item != null) {
-            _items.add(item);
-            // Add the item fetched from server to the cache batch if offline mode is on
+            serverItems.add(item);
             if (widget.offlineMode) {
               itemsToCacheBatch.add(item);
             }
@@ -449,6 +477,9 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
       }
 
       // --- Update UI FIRST ---
+      _items
+        ..clear()
+        ..addAll(serverItems);
       _noDataNotifier.value = _items.isEmpty;
       if (mounted) {
         setState(() {}); // Display fetched items
@@ -657,7 +688,7 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
       valueListenable: _noDataNotifier,
       builder: (context, noData, child) {
         // Determine loading state: Online AND _liveGrid not yet initialized.
-        final bool showLoadingIndicator = !isOffline && _liveGrid == null;
+        final bool showLoadingIndicator = !isOffline && _liveGrid == null && _items.isEmpty;
 
         if (showLoadingIndicator) {
           return widget.gridLoadingElement ??
@@ -667,6 +698,20 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
           return widget.queryEmptyElement ??
               const Center(child: Text('No data available'));
         } else {
+          // When shrinkWrap=true the grid sizes itself; skip Expanded/RefreshIndicator
+          // so it works inside a Column with unbounded height constraints.
+          if (widget.shrinkWrap) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                buildAnimatedGrid(),
+                if (widget.pagination && _items.isNotEmpty)
+                  widget.footerBuilder != null
+                      ? widget.footerBuilder!(context, _loadMoreStatus)
+                      : _buildDefaultFooter(),
+              ],
+            );
+          }
           // Show the grid if not loading and there are items.
           return RefreshIndicator(
             onRefresh: _refreshData,
@@ -688,33 +733,17 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
     );
   }
 
-  // Builds the default footer based on the load more status
+  // Spinner ONLY while actively loading the next page; reaching the end,
+  // errors, and idle render nothing (no label) — the list just stops.
   Widget _buildDefaultFooter() {
-    switch (_loadMoreStatus) {
-      case LoadMoreStatus.loading:
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          alignment: Alignment.center,
-          child: const CircularProgressIndicator(),
-        );
-      case LoadMoreStatus.noMoreData:
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          alignment: Alignment.center,
-          child: const Text("No more items to load"),
-        );
-      case LoadMoreStatus.error:
-        return InkWell(
-          onTap: _loadMoreData, // Allow retry on tap
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
-            alignment: Alignment.center,
-            child: const Text("Error loading more items. Tap to retry."),
-          ),
-        );
-      case LoadMoreStatus.idle:
-        return const SizedBox.shrink();
+    if (_loadMoreStatus == LoadMoreStatus.loading) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 16.0),
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
+      );
     }
+    return const SizedBox.shrink();
   }
 
   // Helper to build the GridView
@@ -727,7 +756,10 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
     return GridView.builder(
       reverse: widget.reverse,
       padding: widget.padding,
-      physics: widget.scrollPhysics,
+      // Default to bouncing overscroll so hitting the end springs back (no-label
+      // "you're at the end" signal). Callers can still override via scrollPhysics.
+      physics: widget.scrollPhysics ??
+          const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       controller: _scrollController, // Use state's controller
       scrollDirection: widget.scrollDirection,
       shrinkWrap: widget.shrinkWrap,
