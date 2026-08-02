@@ -41,10 +41,14 @@ class ParseLiveSliverListWidget<T extends sdk.ParseObject>
     this.nonPaginatedLimit = 1000,
     this.paginationLoadingElement,
     this.footerBuilder,
+    this.preloadItemThreshold = 5,
     this.cacheSize = 50,
     this.offlineMode = false,
     this.cacheFilter,
     this.cacheComparator,
+    this.optimisticItems,
+    this.optimisticKeyField,
+    this.onOptimisticResolved,
     required this.fromJson,
   });
 
@@ -66,6 +70,12 @@ class ParseLiveSliverListWidget<T extends sdk.ParseObject>
   final bool pagination;
   final Widget? paginationLoadingElement;
   final FooterBuilder? footerBuilder;
+
+  /// How many items from the end of the list to begin prefetching the next page.
+  /// Index-based (item-height-independent) so infinite scroll stays smooth: as
+  /// soon as an item within this many rows of the end is built, the next page
+  /// starts loading in the background instead of waiting until the very bottom.
+  final int preloadItemThreshold;
   final int pageSize;
   final int nonPaginatedLimit;
   final int cacheSize;
@@ -78,6 +88,30 @@ class ParseLiveSliverListWidget<T extends sdk.ParseObject>
   /// Order offline-cached items to match the query sort; the server load
   /// then reconciles the final order.
   final int Function(T a, T b)? cacheComparator;
+
+  /// Optimistic (pending) items to display before the server confirms them.
+  ///
+  /// The widget merges these ahead of the server-backed items (at index 0) and
+  /// renders each with [sdk.ParseLiveListElementSnapshot.isOptimistic] = true so
+  /// the childBuilder can style them (dim, spinner, …). When a real object
+  /// arrives (server load or LiveQuery) whose [optimisticKeyField] value matches
+  /// an optimistic item, the real one supersedes it (no duplicate) and
+  /// [onOptimisticResolved] fires so the caller can prune its own list.
+  ///
+  /// The caller owns and mutates this list; order it as you want it to appear
+  /// at the start of the list (e.g. newest-first for a reversed chat).
+  final ValueListenable<List<T>>? optimisticItems;
+
+  /// Field name used to match an optimistic item to the real object that later
+  /// arrives. Defaults to `objectId` when null (useful with custom objectIds);
+  /// set it to a caller-generated correlation field (e.g. a client temp id) when
+  /// the server assigns the objectId.
+  final String? optimisticKeyField;
+
+  /// Called once when a real object supersedes an optimistic one, with both the
+  /// confirmed item and the optimistic item it replaced. Use it to remove the
+  /// resolved entry from [optimisticItems].
+  final void Function(T confirmed, T optimistic)? onOptimisticResolved;
 
   final T Function(Map<String, dynamic> json) fromJson;
 
@@ -148,8 +182,75 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
   @override
   void initState() {
     super.initState();
+
+    // Rebuild when the caller mutates its optimistic list.
+    widget.optimisticItems?.addListener(_onOptimisticChanged);
+
     // Initialize connectivity and load initial data
     initConnectivityHandler();
+  }
+
+  @override
+  void didUpdateWidget(covariant ParseLiveSliverListWidget<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-wire the optimistic listener if the caller swapped the listenable.
+    if (!identical(oldWidget.optimisticItems, widget.optimisticItems)) {
+      oldWidget.optimisticItems?.removeListener(_onOptimisticChanged);
+      widget.optimisticItems?.addListener(_onOptimisticChanged);
+    }
+  }
+
+  void _onOptimisticChanged() {
+    if (mounted) setState(() {});
+  }
+
+  // Keys of optimistic items already reported resolved, so onOptimisticResolved
+  // fires at most once per item.
+  final Set<String> _resolvedOptimisticKeys = <String>{};
+
+  // The correlation key for [obj]: the optimisticKeyField value, or objectId
+  // when no field is set (custom-objectId case).
+  String? _optimisticKeyOf(T obj) {
+    final String? field = widget.optimisticKeyField;
+    if (field == null || field == sdk.keyVarObjectId) return obj.objectId;
+    final dynamic v = obj.get<dynamic>(field);
+    return v?.toString();
+  }
+
+  // Optimistic items not yet superseded by a real item in [_items].
+  List<T> _visibleOptimisticItems() {
+    final List<T>? opt = widget.optimisticItems?.value;
+    if (opt == null || opt.isEmpty) return const [];
+    final Set<String> realKeys = <String>{};
+    for (final T it in _items) {
+      final String? k = _optimisticKeyOf(it);
+      if (k != null) realKeys.add(k);
+    }
+    return opt.where((T o) {
+      final String? k = _optimisticKeyOf(o);
+      return k == null || !realKeys.contains(k);
+    }).toList();
+  }
+
+  // After [_items] changes, notify the caller for any optimistic item that has
+  // now been confirmed by a real object so it can prune its list.
+  void _reconcileOptimistic() {
+    final void Function(T, T)? cb = widget.onOptimisticResolved;
+    final List<T>? opt = widget.optimisticItems?.value;
+    if (cb == null || opt == null || opt.isEmpty) return;
+    final Map<String, T> realByKey = <String, T>{};
+    for (final T it in _items) {
+      final String? k = _optimisticKeyOf(it);
+      if (k != null) realByKey[k] = it;
+    }
+    for (final T o in opt) {
+      final String? k = _optimisticKeyOf(o);
+      if (k != null &&
+          realByKey.containsKey(k) &&
+          _resolvedOptimisticKeys.add(k)) {
+        cb(realByKey[k] as T, o);
+      }
+    }
   }
 
   Future<void> _loadFromCache() async {
@@ -296,6 +397,9 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
       }
       // --- End UI Update ---
 
+      // Confirm any optimistic items now present in the server results.
+      _reconcileOptimistic();
+
       // --- Trigger Background Batch Cache AFTER UI update ---
       if (itemsToCacheBatch.isNotEmpty) {
         // Don't await, let it run in background
@@ -364,6 +468,9 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
                 );
               });
             }
+
+            // A real add/update from LiveQuery may confirm an optimistic item.
+            if (objectToCache != null) _reconcileOptimistic();
 
             _noDataNotifier.value = _items.isEmpty;
           } catch (e) {
@@ -587,7 +694,15 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
     return ValueListenableBuilder<bool>(
       valueListenable: _noDataNotifier,
       builder: (context, noData, child) {
-        final bool showLoadingIndicator = !isOffline && _liveList == null && _items.isEmpty;
+        // Optimistic (pending) items merged ahead of the server-backed items.
+        final List<T> optimistic = _visibleOptimisticItems();
+        final int optCount = optimistic.length;
+
+        // Determine loading state: only when online, the server list isn't ready
+        // yet AND there's nothing cached OR optimistic to show. With
+        // offline-first, cached rows render immediately (from _items).
+        final bool showLoadingIndicator =
+            !isOffline && _liveList == null && _items.isEmpty && optCount == 0;
 
         if (showLoadingIndicator) {
           return widget.listLoadingElement != null
@@ -600,7 +715,9 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
                     ),
                   ),
                 );
-        } else if (noData) {
+        } else if (noData && optCount == 0) {
+          // Show empty state only when there are no server AND no optimistic
+          // items (e.g. the very first message in a new conversation).
           return widget.queryEmptyElement != null
               ? SliverToBoxAdapter(child: widget.queryEmptyElement!)
               : const SliverToBoxAdapter(
@@ -614,16 +731,51 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
         } else {
           return SliverList(
             delegate: SliverChildBuilderDelegate((context, index) {
-              final item = _items[index];
+              // Index-based prefetch: start loading the next page as soon as an
+              // item within [preloadItemThreshold] of the end is built, so the
+              // user never scrolls into a blank/stutter waiting for the next
+              // page. Deferred to after this frame since loadMoreData calls
+              // setState.
+              if (widget.pagination &&
+                  _hasMoreData &&
+                  _loadMoreStatus != LoadMoreStatus.loading &&
+                  index >=
+                      (optCount + _items.length) -
+                          widget.preloadItemThreshold) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) loadMoreData();
+                });
+              }
+
+              // Optimistic items occupy the first [optCount] slots.
+              if (index < optCount) {
+                final T optItem = optimistic[index];
+                return ParseLiveListElementWidget<T>(
+                  key: ValueKey<String>(
+                    'optimistic-${_optimisticKeyOf(optItem) ?? optItem.objectId ?? optItem.hashCode}',
+                  ),
+                  loadedData: () => optItem,
+                  preLoadedData: () => optItem,
+                  isOptimistic: true,
+                  sizeFactor: const AlwaysStoppedAnimation<double>(1.0),
+                  duration: widget.duration,
+                  childBuilder: widget.childBuilder ??
+                      ParseLiveSliverListWidget.defaultChildBuilder,
+                  index: index,
+                );
+              }
+
+              final int realIndex = index - optCount;
+              final item = _items[realIndex];
               StreamGetter<T>? itemStream;
               DataGetter<T>? loadedData;
               DataGetter<T>? preLoadedData;
 
               final liveList = _liveList;
-              if (liveList != null && index < liveList.size) {
-                itemStream = () => liveList.getAt(index);
-                loadedData = () => liveList.getLoadedAt(index);
-                preLoadedData = () => liveList.getPreLoadedAt(index);
+              if (liveList != null && realIndex < liveList.size) {
+                itemStream = () => liveList.getAt(realIndex);
+                loadedData = () => liveList.getLoadedAt(realIndex);
+                preLoadedData = () => liveList.getPreLoadedAt(realIndex);
               } else {
                 loadedData = () => item;
                 preLoadedData = () => item;
@@ -631,7 +783,7 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
 
               return ParseLiveListElementWidget<T>(
                 key: ValueKey<String>(
-                  item.objectId ?? 'unknown-$index-${item.hashCode}',
+                  item.objectId ?? 'unknown-$realIndex-${item.hashCode}',
                 ),
                 stream: itemStream,
                 loadedData: loadedData,
@@ -643,7 +795,7 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
                     ParseLiveSliverListWidget.defaultChildBuilder,
                 index: index,
               );
-            }, childCount: _items.length),
+            }, childCount: optCount + _items.length),
           );
         }
       },
@@ -653,6 +805,7 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
   @override
   void dispose() {
     disposeConnectivityHandler();
+    widget.optimisticItems?.removeListener(_onOptimisticChanged);
     _liveList?.dispose();
     _noDataNotifier.dispose();
     super.dispose();
