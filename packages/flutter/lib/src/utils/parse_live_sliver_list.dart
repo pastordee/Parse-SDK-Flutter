@@ -407,6 +407,17 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
       }
       // --- End Trigger ---
 
+      // Drop cache entries the server no longer returns (deleted/unpublished),
+      // so they don't flash on the next open. Scoped + non-paginated only.
+      pruneStaleOfflineCache<T>(
+        query: widget.query,
+        cacheFilter: widget.cacheFilter,
+        offlineMode: widget.offlineMode,
+        pagination: widget.pagination,
+        serverItems: serverItems,
+        logPrefix: connectivityLogPrefix,
+      );
+
       // --- Trigger Proactive Cache for Next Page ---
       if (widget.pagination && _hasMoreData) {
         // Only if pagination is on and initial load wasn't empty

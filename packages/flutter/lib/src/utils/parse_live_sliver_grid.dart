@@ -520,6 +520,17 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
         _saveBatchToCache(itemsToCacheBatch);
       }
 
+      // Drop cache entries the server no longer returns (deleted/unpublished),
+      // so they don't flash on the next open. Scoped + non-paginated only.
+      pruneStaleOfflineCache<T>(
+        query: widget.query,
+        cacheFilter: widget.cacheFilter,
+        offlineMode: widget.offlineMode,
+        pagination: widget.pagination,
+        serverItems: serverItems,
+        logPrefix: connectivityLogPrefix,
+      );
+
       if (widget.pagination && _hasMoreData) {
         _proactivelyCacheNextPage(1);
       }

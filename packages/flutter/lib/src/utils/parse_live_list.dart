@@ -21,6 +21,44 @@ enum LoadMoreStatus { idle, loading, noMoreData, error }
 typedef FooterBuilder =
     Widget Function(BuildContext context, LoadMoreStatus loadMoreStatus);
 
+/// Removes stale entries from the offline cache after a fresh server load.
+///
+/// Only runs for a SCOPED (has [cacheFilter]) + NON-paginated offline list: in
+/// that case [serverItems] is the COMPLETE in-scope set, so any cached item that
+/// matches the scope but isn't in the server results was deleted/unpublished
+/// server-side and should be dropped — otherwise it flashes on the next open
+/// before the server reconciles. Paginated or unscoped lists are skipped (their
+/// server result isn't the full set, so pruning could delete valid rows).
+Future<void> pruneStaleOfflineCache<T extends sdk.ParseObject>({
+  required sdk.QueryBuilder query,
+  required bool Function(sdk.ParseObject object)? cacheFilter,
+  required bool offlineMode,
+  required bool pagination,
+  required List<T> serverItems,
+  String logPrefix = '',
+}) async {
+  if (!offlineMode || cacheFilter == null || pagination) return;
+  try {
+    final Set<String> serverIds = <String>{};
+    for (final T e in serverItems) {
+      final String? id = e.objectId;
+      if (id != null) serverIds.add(id);
+    }
+    final cached = await ParseObjectOffline.loadAllFromLocalCache(
+      query.object.parseClassName,
+      where: cacheFilter,
+    );
+    for (final obj in cached) {
+      final String? id = obj.objectId;
+      if (id != null && !serverIds.contains(id)) {
+        await obj.removeFromLocalCache();
+      }
+    }
+  } catch (e) {
+    debugPrint('$logPrefix prune stale cache failed: $e');
+  }
+}
+
 /// Builds a [Comparator] from a query's `order` limiter (e.g. `-createdAt` or
 /// `runCount,-createdAt`) so cached rows render in the SAME order as the server
 /// query while offline. The offline store is an unordered map, so without this
@@ -501,6 +539,17 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
         _saveBatchToCache(itemsToCacheBatch);
       }
       // --- End Trigger ---
+
+      // Drop cache entries the server no longer returns (deleted/unpublished),
+      // so they don't flash on the next open. Scoped + non-paginated only.
+      pruneStaleOfflineCache<T>(
+        query: widget.query,
+        cacheFilter: widget.cacheFilter,
+        offlineMode: widget.offlineMode,
+        pagination: widget.pagination,
+        serverItems: serverItems,
+        logPrefix: connectivityLogPrefix,
+      );
 
       // --- Stream Listener ---
       liveList.stream.listen(
