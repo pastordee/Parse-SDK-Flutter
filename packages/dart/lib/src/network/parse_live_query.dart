@@ -273,9 +273,17 @@ class LiveQueryClient {
         print('$_printConstLiveQuery: UnsubscribeMessage: $unsubscribeMessage');
       }
       channel.sink.add(jsonEncode(unsubscribeMessage));
-      subscription._enabled = false;
-      _requestSubscription.remove(subscription.requestId);
     }
+    // Forget the subscription even with no live channel. Telling the server is
+    // best-effort — it only has a socket to hear it on — but the LOCAL state
+    // must always be dropped. Previously both were inside the channel guard, so
+    // unsubscribing while disconnected (app backgrounded, socket dropped) was a
+    // silent no-op: the entry stayed in _requestSubscription and was
+    // resurrected by the re-subscribe on reconnect. Callers that
+    // cancel-and-resubscribe therefore accumulated a duplicate per cycle, and
+    // every event fired their handler once per accumulated subscription.
+    subscription._enabled = false;
+    _requestSubscription.remove(subscription.requestId);
   }
 
   static int _requestIdCount = 1;
