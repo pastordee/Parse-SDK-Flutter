@@ -1158,12 +1158,20 @@ class _ParseLiveListElementWidgetState<T extends sdk.ParseObject>
     // reused State keeps its initState snapshot, so edits never show unless an
     // element stream happens to push them — which is exactly why grids (stream
     // path) updated live but lists (static/offline path) did not. Refresh the
-    // snapshot from the new loadedData whenever it changed. The stream listener
-    // (when present) still drives updates too; this is a safe backstop.
+    // snapshot when the underlying object actually changed (different id, or a
+    // newer updatedAt) so unchanged rows aren't rebuilt needlessly. The stream
+    // listener (when present) still drives updates too; this is a safe backstop.
+    if (_snapshot.error != null) return;
     final T? newData = widget.loadedData?.call();
-    if (newData != null &&
-        _snapshot.error == null &&
-        !identical(newData, _snapshot.loadedData)) {
+    if (newData == null) return;
+    final T? current = _snapshot.loadedData;
+    final bool changed = current == null ||
+        newData.get<String>(sdk.keyVarObjectId) !=
+            current.get<String>(sdk.keyVarObjectId) ||
+        newData.get<DateTime>(sdk.keyVarUpdatedAt) !=
+            current.get<DateTime>(sdk.keyVarUpdatedAt);
+    if (changed) {
+      // No setState: the framework rebuilds after didUpdateWidget automatically.
       _snapshot = sdk.ParseLiveListElementSnapshot<T>(
         loadedData: newData,
         preLoadedData: widget.preLoadedData?.call() ?? _snapshot.preLoadedData,
