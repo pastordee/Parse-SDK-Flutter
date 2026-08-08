@@ -1171,12 +1171,14 @@ class _ParseLiveListElementWidgetState<T extends sdk.ParseObject>
         newData.get<DateTime>(sdk.keyVarUpdatedAt) !=
             current.get<DateTime>(sdk.keyVarUpdatedAt);
     if (changed) {
-      // No setState: the framework rebuilds after didUpdateWidget automatically.
-      _snapshot = sdk.ParseLiveListElementSnapshot<T>(
-        loadedData: newData,
-        preLoadedData: widget.preLoadedData?.call() ?? _snapshot.preLoadedData,
-        isOptimistic: widget.isOptimistic,
-      );
+      setState(() {
+        _snapshot = sdk.ParseLiveListElementSnapshot<T>(
+          loadedData: newData,
+          preLoadedData:
+              widget.preLoadedData?.call() ?? _snapshot.preLoadedData,
+          isOptimistic: widget.isOptimistic,
+        );
+      });
     }
   }
 
