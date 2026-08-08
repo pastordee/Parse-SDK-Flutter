@@ -463,8 +463,6 @@ class LiveQueryClient {
 
     Subscription? subscription;
     if (actionData.containsKey('op') && actionData['op'] == 'connected') {
-      print('Re subscription:$_requestSubscription');
-
       // The handshake is acknowledged — safe to (re)send subscribes now.
       _connected = true;
       _requestSubscription.values.toList().forEach((Subscription subscription) {
