@@ -1151,6 +1151,28 @@ class _ParseLiveListElementWidgetState<T extends sdk.ParseObject>
   }
 
   @override
+  void didUpdateWidget(covariant ParseLiveListElementWidget<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // When an item is UPDATED, the parent rebuilds this element (matched by its
+    // objectId key) with fresh loadedData. Without picking that up here, the
+    // reused State keeps its initState snapshot, so edits never show unless an
+    // element stream happens to push them — which is exactly why grids (stream
+    // path) updated live but lists (static/offline path) did not. Refresh the
+    // snapshot from the new loadedData whenever it changed. The stream listener
+    // (when present) still drives updates too; this is a safe backstop.
+    final T? newData = widget.loadedData?.call();
+    if (newData != null &&
+        _snapshot.error == null &&
+        !identical(newData, _snapshot.loadedData)) {
+      _snapshot = sdk.ParseLiveListElementSnapshot<T>(
+        loadedData: newData,
+        preLoadedData: widget.preLoadedData?.call() ?? _snapshot.preLoadedData,
+        isOptimistic: widget.isOptimistic,
+      );
+    }
+  }
+
+  @override
   void dispose() {
     _streamSubscription?.cancel(); // Cancel stream subscription
     super.dispose();
