@@ -56,8 +56,10 @@ class CoreStoreSembastImp implements CoreStore {
   final StoreRef<String, dynamic> _store;
 
   @override
-  Future<bool> clear() {
-    return _store.drop(_database) as Future<bool>;
+  Future<void> clear() {
+    // `drop` returns Future<void>; the old `as Future<bool>` was an
+    // unconditional CastError, so clearing the Sembast store always threw.
+    return _store.drop(_database);
   }
 
   @override
