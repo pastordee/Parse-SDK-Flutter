@@ -96,8 +96,14 @@ class CoreStoreSembastImp implements CoreStore {
 
   @override
   Future<List<String>?> getStringList(String key) async {
-    final List<String>? storedItem = await get(key);
-    return storedItem;
+    final value = await get(key);
+    if (value == null) return null;
+    if (value is List<String>) return value;
+    // Sembast hands back List<dynamic> for anything it decoded from disk, so
+    // the previous `await get(key)` as List<String> threw a CastError on every
+    // list that had survived a restart.
+    if (value is Iterable) return value.map((e) => e.toString()).toList();
+    return null;
   }
 
   @override
