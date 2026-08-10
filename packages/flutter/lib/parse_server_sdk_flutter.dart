@@ -60,6 +60,16 @@ class Parse extends sdk.Parse
   /// ```
   /// [appName], [appVersion] and [appPackageName] are automatically set on Android and IOS, if they are not defined. You should provide a value on web.
   /// [fileDirectory] is not used on web
+  ///
+  /// [restRetryIntervals] - Retry intervals in milliseconds for read operations.
+  ///   Applies to: GET, DELETE, and getBytes methods.
+  ///   Default: [0, 250, 500, 1000, 2000] (5 retry attempts with exponential backoff).
+  ///   Set to [] to disable retries for read operations.
+  ///
+  /// [restRetryIntervalsForWrites] - Retry intervals in milliseconds for write operations.
+  ///   Applies to: POST, PUT, and postBytes methods.
+  ///   Default: [] (no retries to prevent duplicate data creation).
+  ///   Configure only if you have idempotency guarantees in place.
   @override
   Future<Parse> initialize(
     String appId,
@@ -79,9 +89,9 @@ class Parse extends sdk.Parse
     Map<String, sdk.ParseObjectConstructor>? registeredSubClassMap,
     sdk.ParseUserConstructor? parseUserConstructor,
     sdk.ParseFileConstructor? parseFileConstructor,
-    List<int>? liveListRetryIntervals,
     List<int>? restRetryIntervals,
     List<int>? restRetryIntervalsForWrites,
+    List<int>? liveListRetryIntervals,
     sdk.ParseConnectivityProvider? connectivityProvider,
     String? fileDirectory,
     Stream<void>? appResumedStream,
@@ -117,9 +127,9 @@ class Parse extends sdk.Parse
           registeredSubClassMap: registeredSubClassMap,
           parseUserConstructor: parseUserConstructor,
           parseFileConstructor: parseFileConstructor,
-          liveListRetryIntervals: liveListRetryIntervals,
           restRetryIntervals: restRetryIntervals,
           restRetryIntervalsForWrites: restRetryIntervalsForWrites,
+          liveListRetryIntervals: liveListRetryIntervals,
           connectivityProvider: connectivityProvider ?? this,
           fileDirectory:
               fileDirectory ?? (await CoreStoreDirectory().getTempDirectory()),
@@ -142,6 +152,8 @@ class Parse extends sdk.Parse
   ) {
     if (results.contains(ConnectivityResult.wifi)) {
       return sdk.ParseConnectivityResult.wifi;
+    } else if (results.contains(ConnectivityResult.ethernet)) {
+      return sdk.ParseConnectivityResult.ethernet;
     } else if (results.contains(ConnectivityResult.mobile)) {
       return sdk.ParseConnectivityResult.mobile;
     } else {

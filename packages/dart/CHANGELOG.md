@@ -1,3 +1,24 @@
+# [dart-v9.7.0](https://github.com/parse-community/Parse-SDK-Flutter/compare/dart-9.6.1...dart-9.7.0) (2026-03-29)
+
+
+### Features
+
+* Expose `ParseDioClient.additionalHeaders` to set additional custom headers applied to all requests ([#1113](https://github.com/parse-community/Parse-SDK-Flutter/issues/1113)) ([82e09df](https://github.com/parse-community/Parse-SDK-Flutter/commit/82e09dfdccdab2ef433b6b357e94d2c831e4409d))
+
+# [dart-v9.6.1](https://github.com/parse-community/Parse-SDK-Flutter/compare/dart-9.6.0...dart-9.6.1) (2026-01-25)
+
+
+### Bug Fixes
+
+* Docs analyzer issue causing low pub.dev score ([#1111](https://github.com/parse-community/Parse-SDK-Flutter/issues/1111)) ([4dc80cd](https://github.com/parse-community/Parse-SDK-Flutter/commit/4dc80cd3c7fa134efcf1ef6084d6af65956aba57))
+
+# [dart-v9.6.0](https://github.com/parse-community/Parse-SDK-Flutter/compare/dart-9.5.0...dart-9.6.0) (2026-01-11)
+
+
+### Features
+
+* Upgrade timezone from 0.10.1 to 0.11.0 ([#1104](https://github.com/parse-community/Parse-SDK-Flutter/issues/1104)) ([63ecc18](https://github.com/parse-community/Parse-SDK-Flutter/commit/63ecc18d7966196920d96cff4d50181af5a5959c))
+
 # [dart-v9.5.0](https://github.com/parse-community/Parse-SDK-Flutter/compare/dart-9.4.8...dart-9.5.0) (2025-12-11)
 
 
