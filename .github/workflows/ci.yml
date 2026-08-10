@@ -55,10 +55,19 @@ jobs:
         run: dart analyze packages/dart --fatal-infos
       - name: Lint
         run: dart format --output=none --set-exit-if-changed packages/dart
-      - name: Publish dry run
-        run: cd packages/dart && dart pub publish --dry-run
       - name: Run tests
         run: (cd packages/dart && dart test --coverage=coverage)
+      # `dart pub publish --dry-run` exits non-zero on ANY warning, and a dirty
+      # tracked tree is one of them. The "Run build_runner" step above rewrites
+      # the checked-in `*.mocks.dart` files, and on the beta SDK mockito emits
+      # output that differs from what is committed — so the dry run fails on
+      # changes CI made itself, not on anything wrong with the package. Restore
+      # the committed sources first, after the tests have already run against
+      # the freshly generated ones.
+      - name: Restore files rewritten by earlier steps
+        run: git checkout -- .
+      - name: Publish dry run
+        run: cd packages/dart && dart pub publish --dry-run
       - name: Convert code coverage
         # Needs to be adapted to collect the coverage at all platforms if platform specific code is added.
         if: ${{ always() && matrix.os == 'ubuntu-latest' }}
@@ -129,10 +138,16 @@ jobs:
         run: flutter analyze packages/flutter --fatal-infos
       - name: Lint
         run: dart format --output=none --set-exit-if-changed packages/flutter
-      - name: Publish dry run
-        run: cd packages/flutter && dart pub publish --dry-run
       - name: Run tests
         run: (cd packages/flutter && flutter test --coverage)
+      # Same reason as the dart job: the dry run fails on a dirty tracked tree,
+      # and on the beta SDK `flutter pub get` rewrites the checked-in
+      # `analysis_options.yaml` (and the example's) during the install step
+      # above. Validate against the committed sources.
+      - name: Restore files rewritten by earlier steps
+        run: git checkout -- .
+      - name: Publish dry run
+        run: cd packages/flutter && dart pub publish --dry-run
       - name: Convert code coverage
         # Needs to be adapted to collect the coverage at all platforms if platform specific code is added.
         if: ${{ always() && matrix.os == 'ubuntu-latest' }}
