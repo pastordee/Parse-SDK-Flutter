@@ -363,6 +363,35 @@ void main() {
         await ParseObjectOffline.clearLocalCacheForClass('X');
       });
 
+      test(
+        'clearing class X_v2 does not destroy class X before it migrates',
+        () async {
+          // offline_cache_X_v2 is BOTH the raw list-format key of class 'X_v2'
+          // and the unmigrated map key of class 'X'. Clearing X_v2 must not
+          // take X's cache with it.
+          final store = ParseCoreData().getStore();
+          await store.setString(
+            'offline_cache_X_v2',
+            '{"xOnly":"{\\"className\\":\\"X\\",'
+                '\\"objectId\\":\\"xOnly\\",\\"name\\":\\"Belongs to X\\"}"}',
+          );
+
+          await ParseObjectOffline.clearLocalCacheForClass('X_v2');
+
+          final survived = await ParseObjectOffline.loadFromLocalCache(
+            'X',
+            'xOnly',
+          );
+          expect(
+            survived,
+            isNotNull,
+            reason: "clearing X_v2 must not delete class X's unmigrated cache",
+          );
+          expect(survived!.get<String>('name'), equals('Belongs to X'));
+          await ParseObjectOffline.clearLocalCacheForClass('X');
+        },
+      );
+
       test('an existing _v2 cache is moved to the new key', () async {
         final store = ParseCoreData().getStore();
         const base = 'offline_cache_$testClassName';

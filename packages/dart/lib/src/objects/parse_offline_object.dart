@@ -357,7 +357,14 @@ extension ParseObjectOffline on ParseObject {
       // and made this a silent no-op.
       await store.remove(_offlineMapKey(cacheKey));
       await store.remove(_legacyOfflineMapKey(cacheKey));
-      await store.remove(cacheKey);
+      // The oldest list-format key is the bare cacheKey — but for a class
+      // named 'X_v2' that is 'offline_cache_X_v2', which is also class X's
+      // UNMIGRATED map. Removing it blindly would delete X's cache before X
+      // ever loaded. A list-format entry is a StringList and a map is a
+      // String, so only drop it when it really is a list.
+      if (await store.getStringList(cacheKey) != null) {
+        await store.remove(cacheKey);
+      }
     });
     if (isDebugEnabled()) {
       print('ParseObjectOffline: cleared cache for $className');
