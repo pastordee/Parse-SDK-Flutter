@@ -342,6 +342,38 @@ void main() {
       });
     });
 
+    group('updateInLocalCache encoding', () {
+      test('encodes raw values into Parse wire format', () async {
+        final when = DateTime.utc(2026, 8, 10, 12, 30);
+        final obj = ParseObject(testClassName)
+          ..objectId = 'encode1'
+          ..set('name', 'before');
+        await obj.saveToLocalCache();
+
+        // Cached entries hold what toJson(full: true) produces. A raw DateTime
+        // or ParseGeoPoint merged in as-is would not survive the round trip.
+        final updated = await obj.updateInLocalCache({
+          'name': 'after',
+          'when': when,
+          'where': ParseGeoPoint(latitude: 1.5, longitude: -2.5),
+        });
+        expect(updated, isTrue);
+
+        final loaded = await ParseObjectOffline.loadFromLocalCache(
+          testClassName,
+          'encode1',
+        );
+        expect(loaded, isNotNull);
+        expect(loaded!.get<String>('name'), equals('after'));
+        // Decodes back as real Parse types, the same as a server response.
+        expect(loaded.get<DateTime>('when'), equals(when));
+        final geo = loaded.get<ParseGeoPoint>('where');
+        expect(geo, isNotNull);
+        expect(geo!.latitude, equals(1.5));
+        expect(geo.longitude, equals(-2.5));
+      });
+    });
+
     group('legacy format migration', () {
       test('migrates a List<String> cache and drops the legacy key', () async {
         // Arrange: seed the pre-map format directly under the legacy key.
@@ -502,6 +534,43 @@ void main() {
           await store.getString('offline_cache_${testClassName}_v2'),
           isNotNull,
         );
+      });
+
+      test(
+        'namespace and class name cannot be confused for one another',
+        () async {
+          // Joining with '_' was ambiguous: 'a_b' + 'c' and 'a' + 'b_c' both
+          // produced offline_cache_a_b_c. Parse class names really do contain
+          // underscores (_User, _Installation), so this collided in practice.
+          ParseObjectOffline.cacheNamespace = 'a_b';
+          await (ParseObject('c')..objectId = 'fromAB').saveToLocalCache();
+
+          ParseObjectOffline.cacheNamespace = 'a';
+          expect(
+            await ParseObjectOffline.loadFromLocalCache('b_c', 'fromAB'),
+            isNull,
+            reason: 'namespace a / class b_c must not see a_b / class c',
+          );
+          expect(
+            await ParseObjectOffline.loadAllFromLocalCache('b_c'),
+            isEmpty,
+          );
+
+          await ParseObjectOffline.clearLocalCacheForClass('b_c');
+          ParseObjectOffline.cacheNamespace = 'a_b';
+          await ParseObjectOffline.clearLocalCacheForClass('c');
+        },
+      );
+
+      test('a namespace with odd characters still round-trips', () async {
+        ParseObjectOffline.cacheNamespace = 'user:with/odd%chars';
+        await (ParseObject(testClassName)..objectId = 'odd').saveToLocalCache();
+        final back = await ParseObjectOffline.loadFromLocalCache(
+          testClassName,
+          'odd',
+        );
+        expect(back, isNotNull);
+        await ParseObjectOffline.clearLocalCacheForClass(testClassName);
       });
     });
   });
