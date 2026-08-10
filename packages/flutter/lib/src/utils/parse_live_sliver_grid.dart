@@ -54,7 +54,7 @@ class ParseLiveSliverGridWidget<T extends sdk.ParseObject>
     this.optimisticItems,
     this.optimisticKeyField,
     this.onOptimisticResolved,
-    required this.fromJson,
+    this.fromJson,
   });
 
   final sdk.QueryBuilder<T> query;
@@ -126,7 +126,10 @@ class ParseLiveSliverGridWidget<T extends sdk.ParseObject>
   /// resolved entry from [optimisticItems].
   final void Function(T confirmed, T optimistic)? onOptimisticResolved;
 
-  final T Function(Map<String, dynamic> json) fromJson;
+  /// Optional. Rebuilds a typed [T] from a cached object's JSON when offline.
+  /// Leave it null to fall back to cloning the query's prototype object, which
+  /// resolves registered subclasses the same way ParseLiveList does.
+  final T Function(Map<String, dynamic> json)? fromJson;
 
   @override
   State<ParseLiveSliverGridWidget<T>> createState() =>
@@ -288,7 +291,13 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
       );
       for (final obj in cached) {
         try {
-          _items.add(widget.fromJson(obj.toJson(full: true)));
+          _items.add(
+            cachedObjectFromJson<T>(
+              widget.query,
+              widget.fromJson,
+              obj.toJson(full: true),
+            ),
+          );
         } catch (e) {
           debugPrint(
             '$connectivityLogPrefix Error deserializing cached object: $e',

@@ -59,6 +59,23 @@ Future<void> pruneStaleOfflineCache<T extends sdk.ParseObject>({
   }
 }
 
+/// Rebuilds a typed [T] from a cached object's JSON.
+///
+/// Uses the widget's `fromJson` when one was supplied. Otherwise it falls back
+/// to cloning the query's own prototype object, which is how the Dart
+/// `ParseLiveList` already reconstructs typed objects: for a registered
+/// subclass `clone` returns that subclass, and for a plain query it returns a
+/// [sdk.ParseObject]. This is what keeps `fromJson` optional, so existing
+/// `ParseLiveListWidget` and `ParseLiveGridWidget` call sites keep compiling.
+T cachedObjectFromJson<T extends sdk.ParseObject>(
+  sdk.QueryBuilder<T> query,
+  T Function(Map<String, dynamic> json)? fromJson,
+  Map<String, dynamic> json,
+) {
+  if (fromJson != null) return fromJson(json);
+  return query.object.clone(json) as T;
+}
+
 /// Builds a [Comparator] from a query's `order` limiter (e.g. `-createdAt` or
 /// `runCount,-createdAt`) so cached rows render in the SAME order as the server
 /// query while offline. The offline store is an unordered map, so without this
@@ -155,7 +172,7 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
     this.optimisticItems,
     this.optimisticKeyField,
     this.onOptimisticResolved,
-    required this.fromJson,
+    this.fromJson,
   });
 
   final sdk.QueryBuilder<T> query;
@@ -232,7 +249,10 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
   /// resolved entry from [optimisticItems].
   final void Function(T confirmed, T optimistic)? onOptimisticResolved;
 
-  final T Function(Map<String, dynamic> json) fromJson;
+  /// Optional. Rebuilds a typed [T] from a cached object's JSON when offline.
+  /// Leave it null to fall back to cloning the query's prototype object, which
+  /// resolves registered subclasses the same way ParseLiveList does.
+  final T Function(Map<String, dynamic> json)? fromJson;
 
   @override
   State<ParseLiveListWidget<T>> createState() => _ParseLiveListWidgetState<T>();
@@ -398,7 +418,13 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
       );
       for (final obj in cached) {
         try {
-          loaded.add(widget.fromJson(obj.toJson(full: true)));
+          loaded.add(
+            cachedObjectFromJson<T>(
+              widget.query,
+              widget.fromJson,
+              obj.toJson(full: true),
+            ),
+          );
         } catch (e) {
           debugPrint(
             '$connectivityLogPrefix Error deserializing cached object: $e',

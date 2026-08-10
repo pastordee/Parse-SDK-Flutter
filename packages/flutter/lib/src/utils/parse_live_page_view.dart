@@ -30,7 +30,7 @@ class ParseLiveListPageView<T extends sdk.ParseObject> extends StatefulWidget {
     this.optimisticItems,
     this.optimisticKeyField,
     this.onOptimisticResolved,
-    required this.fromJson, // Added fromJson
+    this.fromJson, // Added fromJson
   });
 
   final sdk.QueryBuilder<T> query;
@@ -97,7 +97,10 @@ class ParseLiveListPageView<T extends sdk.ParseObject> extends StatefulWidget {
   /// resolved entry from [optimisticItems].
   final void Function(T confirmed, T optimistic)? onOptimisticResolved;
 
-  final T Function(Map<String, dynamic> json) fromJson; // Added fromJson
+  /// Optional. Rebuilds a typed [T] from a cached object's JSON when offline.
+  /// Leave it null to fall back to cloning the query's prototype object, which
+  /// resolves registered subclasses the same way ParseLiveList does.
+  final T Function(Map<String, dynamic> json)? fromJson; // Added fromJson
 
   @override
   State<ParseLiveListPageView<T>> createState() =>
@@ -258,7 +261,13 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
       );
       for (final obj in cached) {
         try {
-          _items.add(widget.fromJson(obj.toJson(full: true)));
+          _items.add(
+            cachedObjectFromJson<T>(
+              widget.query,
+              widget.fromJson,
+              obj.toJson(full: true),
+            ),
+          );
         } catch (e) {
           debugPrint(
             '$connectivityLogPrefix Error deserializing cached object: $e',
