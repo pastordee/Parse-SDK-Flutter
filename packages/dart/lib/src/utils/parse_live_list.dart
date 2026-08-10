@@ -1090,12 +1090,19 @@ class ParseLiveListElementSnapshot<T extends ParseObject> {
     this.loadedData,
     this.error,
     this.preLoadedData,
+    this.isOptimistic = false,
   });
 
   final T? loadedData;
   final T? preLoadedData;
 
   final ParseError? error;
+
+  /// True when this element is a caller-supplied optimistic (pending) item that
+  /// has not yet been confirmed by the server. Consumers can use this in their
+  /// childBuilder to style the row differently (e.g. dim it or show a spinner)
+  /// until the real object arrives and supersedes it.
+  final bool isOptimistic;
 
   bool get hasData => loadedData != null;
 
