@@ -190,6 +190,13 @@ class LiveQueryClient {
   WebSocketChannel? _channel;
   final String _liveQueryURL;
   bool _connecting = false;
+
+  /// Whether the LiveQuery `connect` handshake has been acknowledged by the
+  /// server (a `connected` op was received on the current socket). A raw socket
+  /// being open ([_webSocket] != null) is NOT enough — subscribing before this
+  /// is true yields "Can not find this client" and leaves the subscription
+  /// stuck. Reset to false whenever the socket drops.
+  bool _connected = false;
   late StreamController<LiveQueryClientEvent> _clientEventStreamController;
   late Stream<LiveQueryClientEvent> _clientEventStream;
   StreamController<String>? chanelStream;
@@ -232,6 +239,7 @@ class LiveQueryClient {
       subscription._enabled = false;
     });
     _connecting = false;
+    _connected = false;
     if (userInitialized) {
       _clientEventStreamController.sink.add(
         LiveQueryClientEvent.userDisconnected,
@@ -243,21 +251,27 @@ class LiveQueryClient {
     QueryBuilder<T> query, {
     T? copyObject,
   }) async {
-    if (_webSocket == null) {
-      await _clientEventStream.any(
-        (LiveQueryClientEvent event) => event == LiveQueryClientEvent.connected,
-      );
-    }
     final int requestId = _requestIdGenerator();
     final Subscription<T> subscription = Subscription<T>(
       query,
       requestId,
       copyObject: copyObject,
     );
+    // Always register the subscription so the `connected` handler can (re)send
+    // it. Only send the subscribe now if the LiveQuery handshake is already
+    // acknowledged — sending before that yields "Can not find this client" and,
+    // because _subscribeLiveQuery marks it _enabled, the connected handler would
+    // then skip it, leaving it permanently unregistered.
     _requestSubscription[requestId] = subscription;
-    //After a client connects to the LiveQuery server,
-    //it can send a subscribe message to subscribe a ParseQuery.
-    _subscribeLiveQuery(subscription);
+    if (_connected) {
+      //After a client connects to the LiveQuery server,
+      //it can send a subscribe message to subscribe a ParseQuery.
+      _subscribeLiveQuery(subscription);
+    } else if (_webSocket == null && !_connecting) {
+      // No live connection yet — open one. The `connected` handler then sends
+      // this (and every other pending) subscription.
+      reconnect();
+    }
     return subscription;
   }
 
@@ -273,9 +287,17 @@ class LiveQueryClient {
         print('$_printConstLiveQuery: UnsubscribeMessage: $unsubscribeMessage');
       }
       channel.sink.add(jsonEncode(unsubscribeMessage));
-      subscription._enabled = false;
-      _requestSubscription.remove(subscription.requestId);
     }
+    // Forget the subscription even with no live channel. Telling the server is
+    // best-effort — it only has a socket to hear it on — but the LOCAL state
+    // must always be dropped. Previously both were inside the channel guard, so
+    // unsubscribing while disconnected (app backgrounded, socket dropped) was a
+    // silent no-op: the entry stayed in _requestSubscription and was
+    // resurrected by the re-subscribe on reconnect. Callers that
+    // cancel-and-resubscribe therefore accumulated a duplicate per cycle, and
+    // every event fired their handler once per accumulated subscription.
+    subscription._enabled = false;
+    _requestSubscription.remove(subscription.requestId);
   }
 
   static int _requestIdCount = 1;
@@ -316,6 +338,7 @@ class LiveQueryClient {
           chanelStream?.sink.add(message);
         },
         onDone: () {
+          _connected = false;
           _clientEventStreamController.sink.add(
             LiveQueryClientEvent.disconnected,
           );
@@ -324,6 +347,7 @@ class LiveQueryClient {
           }
         },
         onError: (Object error) {
+          _connected = false;
           _clientEventStreamController.sink.add(
             LiveQueryClientEvent.disconnected,
           );
@@ -439,9 +463,14 @@ class LiveQueryClient {
 
     Subscription? subscription;
     if (actionData.containsKey('op') && actionData['op'] == 'connected') {
-      print('Re subscription:$_requestSubscription');
-
+      // The handshake is acknowledged — safe to (re)send subscribes now.
+      _connected = true;
       _requestSubscription.values.toList().forEach((Subscription subscription) {
+        // This is a fresh connection, so the server has no record of any prior
+        // subscribe. Force a re-send by clearing _enabled first — otherwise the
+        // guard in _subscribeLiveQuery skips already-enabled subscriptions and
+        // they never re-register after a (re)connect.
+        subscription._enabled = false;
         _subscribeLiveQuery(subscription);
       });
       _clientEventStreamController.sink.add(LiveQueryClientEvent.connected);
