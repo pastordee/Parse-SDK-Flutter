@@ -301,8 +301,9 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
         // No explicit comparator — fall back to the query's own order so newly
         // cached items land in their correct spot (e.g. -createdAt = newest on
         // top) instead of at the bottom in cache-insertion order.
-        final Comparator<T>? auto =
-            cacheOrderComparatorFromQuery<T>(widget.query);
+        final Comparator<T>? auto = cacheOrderComparatorFromQuery<T>(
+          widget.query,
+        );
         if (auto != null) _items.sort(auto);
       }
       debugPrint(
@@ -543,7 +544,7 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
 
           try {
             if (event is sdk.ParseLiveListAddEvent<sdk.ParseObject>) {
-              final addedItem = event.object as T;
+              final T addedItem = event.object;
               setState(() {
                 _items.insert(event.index, addedItem);
               });
@@ -561,7 +562,7 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
                 }
               }
             } else if (event is sdk.ParseLiveListUpdateEvent<sdk.ParseObject>) {
-              final updatedItem = event.object as T;
+              final T updatedItem = event.object;
               if (event.index >= 0 && event.index < _items.length) {
                 setState(() {
                   _items[event.index] = updatedItem;

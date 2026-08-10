@@ -17,9 +17,7 @@ extension ParseObjectOffline on ParseObject {
     }
     map[objectId!] = json.encode(toJson(full: true));
     await _saveMap(store, cacheKey, map);
-    print(
-      'ParseObjectOffline: saved $objectId to cache for $parseClassName',
-    );
+    print('ParseObjectOffline: saved $objectId to cache for $parseClassName');
   }
 
   /// Remove this object from local storage.
@@ -57,9 +55,7 @@ extension ParseObjectOffline on ParseObject {
       );
       return true;
     } catch (e) {
-      print(
-        'ParseObjectOffline.updateInLocalCache: error for $objectId: $e',
-      );
+      print('ParseObjectOffline.updateInLocalCache: error for $objectId: $e');
       return false;
     }
   }
@@ -72,13 +68,16 @@ extension ParseObjectOffline on ParseObject {
     String objectId,
   ) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map =
-        await _loadMap(store, 'offline_cache_$className');
+    final Map<String, String> map = await _loadMap(
+      store,
+      'offline_cache_$className',
+    );
     final String? raw = map[objectId];
     if (raw == null) return null;
     try {
-      return ParseObject(className)
-          .fromJson(json.decode(raw) as Map<String, dynamic>);
+      return ParseObject(
+        className,
+      ).fromJson(json.decode(raw) as Map<String, dynamic>);
     } catch (e) {
       print(
         'ParseObjectOffline.loadFromLocalCache: corrupt entry for $objectId '
@@ -100,13 +99,16 @@ extension ParseObjectOffline on ParseObject {
     bool Function(ParseObject object)? where,
   }) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map =
-        await _loadMap(store, 'offline_cache_$className');
+    final Map<String, String> map = await _loadMap(
+      store,
+      'offline_cache_$className',
+    );
     final List<ParseObject> results = [];
     for (final entry in map.entries) {
       try {
-        final ParseObject object = ParseObject(className)
-            .fromJson(json.decode(entry.value) as Map<String, dynamic>);
+        final ParseObject object = ParseObject(
+          className,
+        ).fromJson(json.decode(entry.value) as Map<String, dynamic>);
         if (where == null || where(object)) {
           results.add(object);
         }
@@ -175,8 +177,10 @@ extension ParseObjectOffline on ParseObject {
     String className,
   ) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map =
-        await _loadMap(store, 'offline_cache_$className');
+    final Map<String, String> map = await _loadMap(
+      store,
+      'offline_cache_$className',
+    );
     return map.keys.toList();
   }
 
@@ -186,15 +190,22 @@ extension ParseObjectOffline on ParseObject {
     String objectId,
   ) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map =
-        await _loadMap(store, 'offline_cache_$className');
+    final Map<String, String> map = await _loadMap(
+      store,
+      'offline_cache_$className',
+    );
     return map.containsKey(objectId);
   }
 
   /// Wipes the entire cache for a class.
   static Future<void> clearLocalCacheForClass(String className) async {
     final CoreStore store = ParseCoreData().getStore();
-    await store.remove('offline_cache_$className');
+    final String cacheKey = 'offline_cache_$className';
+    // Remove BOTH formats. Reads and writes go through the `_v2` map key, so
+    // dropping only the legacy list key left the actual cache fully intact and
+    // made this a silent no-op.
+    await store.remove('${cacheKey}_v2');
+    await store.remove(cacheKey);
     print('ParseObjectOffline: cleared cache for $className');
   }
 

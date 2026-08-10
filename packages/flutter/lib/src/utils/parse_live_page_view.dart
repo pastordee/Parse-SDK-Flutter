@@ -271,8 +271,9 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
         // No explicit comparator — fall back to the query's own order so newly
         // cached items land in their correct spot (e.g. -createdAt = newest on
         // top) instead of at the bottom in cache-insertion order.
-        final Comparator<T>? auto =
-            cacheOrderComparatorFromQuery<T>(widget.query);
+        final Comparator<T>? auto = cacheOrderComparatorFromQuery<T>(
+          widget.query,
+        );
         if (auto != null) _items.sort(auto);
       }
       debugPrint(
@@ -412,7 +413,7 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
           try {
             // Wrap event processing
             if (event is sdk.ParseLiveListAddEvent<sdk.ParseObject>) {
-              final addedItem = event.object as T;
+              final T addedItem = event.object;
               setState(() {
                 _items.insert(event.index, addedItem);
               });
@@ -434,7 +435,7 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
                 );
               }
             } else if (event is sdk.ParseLiveListUpdateEvent<sdk.ParseObject>) {
-              final updatedItem = event.object as T;
+              final T updatedItem = event.object;
               if (event.index >= 0 && event.index < _items.length) {
                 setState(() {
                   _items[event.index] = updatedItem;
@@ -745,13 +746,15 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
                 scrollDirection: widget.scrollDirection ?? Axis.horizontal,
                 // Default to bouncing overscroll so reaching the first/last page
                 // springs back. Callers can override via scrollPhysics.
-                physics: widget.scrollPhysics ??
+                physics:
+                    widget.scrollPhysics ??
                     const AlwaysScrollableScrollPhysics(
                       parent: BouncingScrollPhysics(),
                     ),
                 // Add optCount for optimistic items ahead of the list, plus 1
                 // for the loading indicator if paginating and more data exists.
-                itemCount: optCount +
+                itemCount:
+                    optCount +
                     _items.length +
                     (widget.pagination && _hasMoreData ? 1 : 0),
                 onPageChanged: (index) {
@@ -794,8 +797,7 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
 
                   // Show loading indicator for the last item if paginating and
                   // more data is available.
-                  if (widget.pagination &&
-                      index >= optCount + _items.length) {
+                  if (widget.pagination && index >= optCount + _items.length) {
                     return widget.loadingIndicator ??
                         const Center(child: CircularProgressIndicator());
                   }
@@ -812,7 +814,8 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
                       isOptimistic: true,
                       sizeFactor: const AlwaysStoppedAnimation<double>(1.0),
                       duration: widget.duration,
-                      childBuilder: widget.childBuilder ??
+                      childBuilder:
+                          widget.childBuilder ??
                           ParseLiveListWidget.defaultChildBuilder,
                       index: index,
                     );

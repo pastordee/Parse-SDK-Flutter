@@ -302,8 +302,9 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
         // No explicit comparator — fall back to the query's own order so newly
         // cached items land in their correct spot (e.g. -createdAt = newest on
         // top) instead of at the bottom in cache-insertion order.
-        final Comparator<T>? auto =
-            cacheOrderComparatorFromQuery<T>(widget.query);
+        final Comparator<T>? auto = cacheOrderComparatorFromQuery<T>(
+          widget.query,
+        );
         if (auto != null) _items.sort(auto);
       }
       debugPrint(
@@ -625,7 +626,7 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
           try {
             // Wrap event processing
             if (event is sdk.ParseLiveListAddEvent<sdk.ParseObject>) {
-              final addedItem = event.object as T;
+              final T addedItem = event.object;
               setState(() {
                 _items.insert(event.index, addedItem);
               });
@@ -647,7 +648,7 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
                 );
               }
             } else if (event is sdk.ParseLiveListUpdateEvent<sdk.ParseObject>) {
-              final updatedItem = event.object as T;
+              final T updatedItem = event.object;
               if (event.index >= 0 && event.index < _items.length) {
                 setState(() {
                   _items[event.index] = updatedItem;
@@ -843,7 +844,9 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
             child: Column(
               children: [
                 Expanded(
-                  child: buildAnimatedGrid(optimistic), // Use helper for GridView
+                  child: buildAnimatedGrid(
+                    optimistic,
+                  ), // Use helper for GridView
                 ),
                 // Show footer only if pagination is enabled and items exist
                 if (widget.pagination && _items.isNotEmpty)
@@ -886,7 +889,8 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
       padding: widget.padding,
       // Default to bouncing overscroll so hitting the end springs back (no-label
       // "you're at the end" signal). Callers can still override via scrollPhysics.
-      physics: widget.scrollPhysics ??
+      physics:
+          widget.scrollPhysics ??
           const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       controller: _scrollController, // Use state's controller
       scrollDirection: widget.scrollDirection,
@@ -906,8 +910,7 @@ class _ParseLiveGridWidgetState<T extends sdk.ParseObject>
         if (widget.pagination &&
             _hasMoreData &&
             _loadMoreStatus != LoadMoreStatus.loading &&
-            index >=
-                (optCount + _items.length) - widget.preloadItemThreshold) {
+            index >= (optCount + _items.length) - widget.preloadItemThreshold) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _loadMoreData();
           });

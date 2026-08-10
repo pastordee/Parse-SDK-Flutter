@@ -359,8 +359,9 @@ class ParseLiveList<T extends ParseObject> {
           //If the object is not fetched
           if (!includedObject.containsKey(keyVarUpdatedAt)) {
             //See if oldObject contains key
-            ParseObject? keyInOld =
-                oldObject == null ? null : _subItemOrNull(oldObject, key);
+            ParseObject? keyInOld = oldObject == null
+                ? null
+                : _subItemOrNull(oldObject, key);
             if (keyInOld != null) {
               //If the object is not fetched || the ids don't match / the pointer changed
               if (!keyInOld.containsKey(keyVarUpdatedAt) ||

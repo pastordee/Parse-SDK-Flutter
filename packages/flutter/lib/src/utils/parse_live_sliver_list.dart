@@ -37,7 +37,7 @@ class ParseLiveSliverListWidget<T extends sdk.ParseObject>
     this.preloadedColumns,
     this.excludedColumns,
     this.pagination = false,
-    this.pageSize =100,
+    this.pageSize = 100,
     this.nonPaginatedLimit = 1000,
     this.paginationLoadingElement,
     this.footerBuilder,
@@ -287,8 +287,9 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
         // No explicit comparator — fall back to the query's own order so newly
         // cached items land in their correct spot (e.g. -createdAt = newest on
         // top) instead of at the bottom in cache-insertion order.
-        final Comparator<T>? auto =
-            cacheOrderComparatorFromQuery<T>(widget.query);
+        final Comparator<T>? auto = cacheOrderComparatorFromQuery<T>(
+          widget.query,
+        );
         if (auto != null) _items.sort(auto);
       }
       debugPrint(
@@ -435,7 +436,7 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
           try {
             // Wrap event processing in try-catch
             if (event is sdk.ParseLiveListAddEvent<sdk.ParseObject>) {
-              final addedItem = event.object as T;
+              final T addedItem = event.object;
               setState(() {
                 _items.insert(event.index, addedItem);
               });
@@ -458,7 +459,7 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
                 );
               }
             } else if (event is sdk.ParseLiveListUpdateEvent<sdk.ParseObject>) {
-              final updatedItem = event.object as T;
+              final T updatedItem = event.object;
               if (event.index >= 0 && event.index < _items.length) {
                 setState(() {
                   _items[event.index] = updatedItem;
@@ -770,7 +771,8 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
                   isOptimistic: true,
                   sizeFactor: const AlwaysStoppedAnimation<double>(1.0),
                   duration: widget.duration,
-                  childBuilder: widget.childBuilder ??
+                  childBuilder:
+                      widget.childBuilder ??
                       ParseLiveSliverListWidget.defaultChildBuilder,
                   index: index,
                 );

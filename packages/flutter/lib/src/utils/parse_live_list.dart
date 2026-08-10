@@ -72,8 +72,10 @@ Comparator<T>? cacheOrderComparatorFromQuery<T extends sdk.ParseObject>(
 ) {
   final Object? orderRaw = query.limiters['order'];
   if (orderRaw is! String || orderRaw.isEmpty) return null;
-  final List<String> keys =
-      orderRaw.split(',').where((String k) => k.isNotEmpty).toList();
+  final List<String> keys = orderRaw
+      .split(',')
+      .where((String k) => k.isNotEmpty)
+      .toList();
   if (keys.isEmpty) return null;
   return (T a, T b) {
     for (final String rawKey in keys) {
@@ -411,8 +413,9 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
         // No explicit comparator — fall back to the query's own order so newly
         // cached items land in their correct spot (e.g. -createdAt = newest on
         // top) instead of at the bottom in cache-insertion order.
-        final Comparator<T>? auto =
-            cacheOrderComparatorFromQuery<T>(widget.query);
+        final Comparator<T>? auto = cacheOrderComparatorFromQuery<T>(
+          widget.query,
+        );
         if (auto != null) loaded.sort(auto);
       }
       debugPrint(
@@ -561,8 +564,7 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
           try {
             // Wrap event processing in try-catch
             if (event is sdk.ParseLiveListAddEvent<sdk.ParseObject>) {
-              // Cast to T — stream events carry ParseObject but _items is List<T>
-              final addedItem = event.object as T;
+              final T addedItem = event.object;
               setState(() {
                 _items.insert(event.index, addedItem);
               });
@@ -584,8 +586,7 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                 );
               }
             } else if (event is sdk.ParseLiveListUpdateEvent<sdk.ParseObject>) {
-              // Cast to T — same reason as AddEvent above
-              final updatedItem = event.object as T;
+              final T updatedItem = event.object;
               if (event.index >= 0 && event.index < _items.length) {
                 setState(() {
                   _items[event.index] = updatedItem;
@@ -785,8 +786,7 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
         // off), NOT an error. Some SDK responses return results == null (rather
         // than an empty list) at the boundary, which previously fell through to
         // the error branch and showed "Error loading more items".
-        final List<T> results =
-            parseResponse.results?.cast<T>() ?? <T>[];
+        final List<T> results = parseResponse.results?.cast<T>() ?? <T>[];
 
         if (results.isEmpty) {
           setState(() {
@@ -909,7 +909,8 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                     // the list springs back — a no-label "you're at the end"
                     // signal (esp. after pagination stops). Callers can still
                     // override via scrollPhysics.
-                    physics: widget.scrollPhysics ??
+                    physics:
+                        widget.scrollPhysics ??
                         const AlwaysScrollableScrollPhysics(
                           parent: BouncingScrollPhysics(),
                         ),
@@ -947,10 +948,10 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                           loadedData: () => optItem,
                           preLoadedData: () => optItem,
                           isOptimistic: true,
-                          sizeFactor:
-                              const AlwaysStoppedAnimation<double>(1.0),
+                          sizeFactor: const AlwaysStoppedAnimation<double>(1.0),
                           duration: widget.duration,
-                          childBuilder: widget.childBuilder ??
+                          childBuilder:
+                              widget.childBuilder ??
                               ParseLiveListWidget.defaultChildBuilder,
                           index: index,
                         );
@@ -967,7 +968,8 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                       if (liveList != null && realIndex < liveList.size) {
                         itemStream = () => liveList.getAt(realIndex);
                         loadedData = () => liveList.getLoadedAt(realIndex);
-                        preLoadedData = () => liveList.getPreLoadedAt(realIndex);
+                        preLoadedData = () =>
+                            liveList.getPreLoadedAt(realIndex);
                       } else {
                         // Offline or before _liveList is ready: Use data directly from _items
                         loadedData = () => item;
@@ -1165,7 +1167,8 @@ class _ParseLiveListElementWidgetState<T extends sdk.ParseObject>
     final T? newData = widget.loadedData?.call();
     if (newData == null) return;
     final T? current = _snapshot.loadedData;
-    final bool changed = current == null ||
+    final bool changed =
+        current == null ||
         newData.get<String>(sdk.keyVarObjectId) !=
             current.get<String>(sdk.keyVarObjectId) ||
         newData.get<DateTime>(sdk.keyVarUpdatedAt) !=
