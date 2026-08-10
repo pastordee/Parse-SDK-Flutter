@@ -7,12 +7,22 @@ const String _printConstLiveQuery = 'LiveQuery: ';
 class Subscription<T extends ParseObject> {
   Subscription(this.query, this.requestId, {T? copyObject}) {
     _copyObject = copyObject;
+    // Captured up front because _subscribeLiveQuery clears query.limiters to
+    // strip the limits LiveQuery does not accept. That is destructive, so by
+    // the time the subscription is re-sent on reconnect the 'keys' limiter is
+    // gone and the payload would silently omit 'fields' — the server would
+    // then push full objects instead of the selected columns.
+    _keysToReturn = query.limiters['keys']?.split(',');
   }
 
   QueryBuilder<T> query;
   T? _copyObject;
   int requestId;
   bool _enabled = false;
+
+  /// The `keys` limiter as it was when this subscription was created, so every
+  /// subscribe message for it carries the same `fields` list.
+  List<String>? _keysToReturn;
   final List<String> _liveQueryEvent = <String>[
     'create',
     'enter',
@@ -327,7 +337,7 @@ class LiveQueryClient {
         if (_debug) {
           print('$_printConstLiveQuery: Error when connection client');
         }
-        // Plain  rather than a Future: this is an async body, so
+        // Plain `null` rather than a Future: this is an async body, so
         // returning a Future inside the try block trips
         // unawaited_return_in_try_block on newer analyzers.
         return null;
@@ -426,7 +436,7 @@ class LiveQueryClient {
     }
     subscription._enabled = true;
     final QueryBuilder query = subscription.query;
-    final List<String>? keysToReturn = query.limiters['keys']?.split(',');
+    final List<String>? keysToReturn = subscription._keysToReturn;
     query.limiters.clear(); //Remove limits in LiveQuery
     final String where = query.buildQuery().replaceAll('where=', '');
 
