@@ -1,3 +1,4 @@
+import 'package:sembast/sembast_memory.dart';
 import 'package:test/test.dart';
 import 'package:parse_server_sdk/parse_server_sdk.dart';
 
@@ -194,6 +195,55 @@ void main() {
         final result = await store.getString(key);
         expect(result, 'value for $key', reason: 'Failed for key: $key');
       }
+    });
+  });
+
+  group('CoreStoreSembastImp getStringList', () {
+    // The sembast implementation has its own decode path: a value that has
+    // been through the database comes back as List<dynamic>, which used to
+    // throw a CastError instead of returning the list.
+    late CoreStoreSembastImp sembastStore;
+
+    setUpAll(() async {
+      sembastStore = await CoreStoreSembastImp.getInstance(
+        'core_store_test.db',
+        factory: databaseFactoryMemory,
+        password: 'core_store_test',
+      );
+    });
+
+    setUp(() async {
+      await sembastStore.clear();
+    });
+
+    test('returns a usable List<String> for a stored list', () async {
+      const testList = ['alpha', 'beta', 'gamma'];
+      await sembastStore.setStringList('sembast_key', testList);
+
+      final result = await sembastStore.getStringList('sembast_key');
+
+      expect(result, isNotNull);
+      expect(result, isA<List<String>>());
+      expect(result, equals(testList));
+      // Must survive being handed to List<String>-typed code.
+      final List<String> asTyped = result!;
+      expect(asTyped.first, equals('alpha'));
+    });
+
+    test('returns null for a missing key', () async {
+      expect(await sembastStore.getStringList('no_such_key'), isNull);
+    });
+
+    test('handles an empty list', () async {
+      await sembastStore.setStringList('empty_key', <String>[]);
+      final result = await sembastStore.getStringList('empty_key');
+      expect(result, isNotNull);
+      expect(result, isEmpty);
+    });
+
+    test('returns null when the stored value is not a list', () async {
+      await sembastStore.setString('scalar_key', 'just a string');
+      expect(await sembastStore.getStringList('scalar_key'), isNull);
     });
   });
 }

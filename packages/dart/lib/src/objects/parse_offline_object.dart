@@ -1,36 +1,137 @@
 part of '../../parse_server_sdk.dart';
 
+/// Outcome of [ParseObjectOffline.syncLocalCacheWithServer].
+///
+/// Exists so callers get a failure signal without having to read the log: a
+/// void return made an unsuccessful `save()` indistinguishable from a clean
+/// sync, and unsynced edits could be treated as persisted.
+class ParseOfflineSyncResult {
+  ParseOfflineSyncResult({
+    required this.synced,
+    required this.skipped,
+    required this.failures,
+  });
+
+  /// Objects successfully saved to the server.
+  final int synced;
+
+  /// Objects rejected by the `shouldSync` predicate.
+  final int skipped;
+
+  /// The objects whose `save()` did not succeed, with the reported error.
+  final List<ParseOfflineSyncFailure> failures;
+
+  /// True when at least one object failed to save.
+  bool get hasFailures => failures.isNotEmpty;
+
+  @override
+  String toString() =>
+      'ParseOfflineSyncResult(synced: $synced, skipped: $skipped, '
+      'failures: ${failures.length})';
+}
+
+/// A single failed save from [ParseObjectOffline.syncLocalCacheWithServer].
+class ParseOfflineSyncFailure {
+  ParseOfflineSyncFailure(this.object, this.error);
+
+  final ParseObject object;
+  final ParseError? error;
+
+  @override
+  String toString() =>
+      'ParseOfflineSyncFailure(${object.objectId}: ${error?.message})';
+}
+
+/// Serialises read-modify-write sequences per cache key.
+///
+/// Every mutating operation loads the whole map, edits it, then writes the
+/// whole map back. Without this, two concurrent calls both read the same
+/// starting state and the second write silently discards the first one's
+/// change. Reads take the lock too, because [_loadMap] itself writes when it
+/// migrates the legacy format.
+final Map<String, Future<void>> _offlineCacheLocks = <String, Future<void>>{};
+
+Future<R> _withOfflineCacheLock<R>(
+  String cacheKey,
+  Future<R> Function() action,
+) {
+  final Future<void> previous =
+      _offlineCacheLocks[cacheKey] ?? Future<void>.value();
+  final Completer<void> release = Completer<void>();
+  _offlineCacheLocks[cacheKey] = release.future;
+  return previous.then((_) => action()).whenComplete(() {
+    release.complete();
+    // Only drop the entry if nobody queued behind us, otherwise the next
+    // waiter would lose its place in the chain.
+    if (identical(_offlineCacheLocks[cacheKey], release.future)) {
+      _offlineCacheLocks.remove(cacheKey);
+    }
+  });
+}
+
+String _offlineCacheKey(String className) {
+  final String? namespace = ParseObjectOffline.cacheNamespace;
+  return namespace == null || namespace.isEmpty
+      ? 'offline_cache_$className'
+      : 'offline_cache_${namespace}_$className';
+}
+
 extension ParseObjectOffline on ParseObject {
+  /// Namespace applied to every offline cache key, for separating the caches
+  /// of different accounts in the same app.
+  ///
+  /// The cache is plain local storage and [loadFromLocalCache] reads it
+  /// directly, so it is NOT subject to the server's access checks. With a
+  /// persistent [CoreStore] and no namespace, objects cached by one user stay
+  /// readable after switching to another account.
+  ///
+  /// Set this to a stable per-account value (for example the user's objectId)
+  /// on login, and call [clearLocalCacheForNamespace] on logout if the cached
+  /// data should not outlive the session. Leave it null for single-account
+  /// apps, which keeps the historic key layout.
+  static String? cacheNamespace;
+
   // ─── Single-object operations ────────────────────────────────────────────
 
   /// Save this object to local storage for offline access.
   Future<void> saveToLocalCache() async {
-    final CoreStore store = ParseCoreData().getStore();
-    final String cacheKey = 'offline_cache_$parseClassName';
-    final Map<String, String> map = await _loadMap(store, cacheKey);
     if (objectId == null) {
-      print(
-        'ParseObjectOffline.saveToLocalCache: skipping object with no objectId '
-        'for $parseClassName',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline.saveToLocalCache: skipping object with no objectId '
+          'for $parseClassName',
+        );
+      }
       return;
     }
-    map[objectId!] = json.encode(toJson(full: true));
-    await _saveMap(store, cacheKey, map);
-    print('ParseObjectOffline: saved $objectId to cache for $parseClassName');
+    final CoreStore store = ParseCoreData().getStore();
+    final String cacheKey = _offlineCacheKey(parseClassName);
+    final String id = objectId!;
+    final String encoded = json.encode(toJson(full: true));
+    await _withOfflineCacheLock(cacheKey, () async {
+      final Map<String, String> map = await _loadMap(store, cacheKey);
+      map[id] = encoded;
+      await _saveMap(store, cacheKey, map);
+    });
+    if (isDebugEnabled()) {
+      print('ParseObjectOffline: saved $id to cache for $parseClassName');
+    }
   }
 
   /// Remove this object from local storage.
   Future<void> removeFromLocalCache() async {
     if (objectId == null) return;
     final CoreStore store = ParseCoreData().getStore();
-    final String cacheKey = 'offline_cache_$parseClassName';
-    final Map<String, String> map = await _loadMap(store, cacheKey);
-    if (map.remove(objectId) != null) {
+    final String cacheKey = _offlineCacheKey(parseClassName);
+    final String id = objectId!;
+    final bool removed = await _withOfflineCacheLock(cacheKey, () async {
+      final Map<String, String> map = await _loadMap(store, cacheKey);
+      if (map.remove(id) == null) return false;
       await _saveMap(store, cacheKey, map);
-      print(
-        'ParseObjectOffline: removed $objectId from cache for $parseClassName',
-      );
+      return true;
+    });
+    if (removed && isDebugEnabled()) {
+      print('ParseObjectOffline: removed $id from cache for $parseClassName');
     }
   }
 
@@ -40,24 +141,29 @@ extension ParseObjectOffline on ParseObject {
   Future<bool> updateInLocalCache(Map<String, dynamic> updates) async {
     if (objectId == null) return false;
     final CoreStore store = ParseCoreData().getStore();
-    final String cacheKey = 'offline_cache_$parseClassName';
-    final Map<String, String> map = await _loadMap(store, cacheKey);
-    final String? existing = map[objectId];
-    if (existing == null) return false;
-    try {
-      final Map<String, dynamic> obj =
-          json.decode(existing) as Map<String, dynamic>;
-      obj.addAll(updates);
-      map[objectId!] = json.encode(obj);
-      await _saveMap(store, cacheKey, map);
-      print(
-        'ParseObjectOffline: updated $objectId in cache for $parseClassName',
-      );
-      return true;
-    } catch (e) {
-      print('ParseObjectOffline.updateInLocalCache: error for $objectId: $e');
-      return false;
-    }
+    final String cacheKey = _offlineCacheKey(parseClassName);
+    final String id = objectId!;
+    return _withOfflineCacheLock(cacheKey, () async {
+      final Map<String, String> map = await _loadMap(store, cacheKey);
+      final String? existing = map[id];
+      if (existing == null) return false;
+      try {
+        final Map<String, dynamic> obj =
+            json.decode(existing) as Map<String, dynamic>;
+        obj.addAll(updates);
+        map[id] = json.encode(obj);
+        await _saveMap(store, cacheKey, map);
+        if (isDebugEnabled()) {
+          print('ParseObjectOffline: updated $id in cache for $parseClassName');
+        }
+        return true;
+      } catch (e) {
+        if (isDebugEnabled()) {
+          print('ParseObjectOffline.updateInLocalCache: error for $id: $e');
+        }
+        return false;
+      }
+    });
   }
 
   // ─── Batch / static operations ───────────────────────────────────────────
@@ -68,26 +174,27 @@ extension ParseObjectOffline on ParseObject {
     String objectId,
   ) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map = await _loadMap(
-      store,
-      'offline_cache_$className',
-    );
-    final String? raw = map[objectId];
+    final String cacheKey = _offlineCacheKey(className);
+    final String? raw = await _withOfflineCacheLock(cacheKey, () async {
+      final Map<String, String> map = await _loadMap(store, cacheKey);
+      return map[objectId];
+    });
     if (raw == null) return null;
     try {
       return ParseObject(
         className,
       ).fromJson(json.decode(raw) as Map<String, dynamic>);
     } catch (e) {
-      print(
-        'ParseObjectOffline.loadFromLocalCache: corrupt entry for $objectId '
-        'in $className — $e',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline.loadFromLocalCache: corrupt entry for $objectId '
+          'in $className — $e',
+        );
+      }
       return null;
     }
   }
 
-  /// Load all objects of a class from local storage.
   /// Load every cached object of [className].
   ///
   /// The offline store holds one bucket per class, so callers that only want a
@@ -99,9 +206,10 @@ extension ParseObjectOffline on ParseObject {
     bool Function(ParseObject object)? where,
   }) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map = await _loadMap(
-      store,
-      'offline_cache_$className',
+    final String cacheKey = _offlineCacheKey(className);
+    final Map<String, String> map = await _withOfflineCacheLock(
+      cacheKey,
+      () => _loadMap(store, cacheKey),
     );
     final List<ParseObject> results = [];
     for (final entry in map.entries) {
@@ -113,16 +221,20 @@ extension ParseObjectOffline on ParseObject {
           results.add(object);
         }
       } catch (e) {
-        print(
-          'ParseObjectOffline.loadAllFromLocalCache: skipping corrupt entry '
-          '${entry.key} for $className — $e',
-        );
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline.loadAllFromLocalCache: skipping corrupt entry '
+            '${entry.key} for $className — $e',
+          );
+        }
       }
     }
-    print(
-      'ParseObjectOffline: loaded ${results.length} objects from cache for '
-      '$className${where != null ? ' (filtered)' : ''}',
-    );
+    if (isDebugEnabled()) {
+      print(
+        'ParseObjectOffline: loaded ${results.length} objects from cache for '
+        '$className${where != null ? ' (filtered)' : ''}',
+      );
+    }
     return results;
   }
 
@@ -133,43 +245,52 @@ extension ParseObjectOffline on ParseObject {
   ) async {
     if (objects.isEmpty) return;
     final CoreStore store = ParseCoreData().getStore();
-    final String cacheKey = 'offline_cache_$className';
-    final Map<String, String> map = await _loadMap(store, cacheKey);
+    final String cacheKey = _offlineCacheKey(className);
 
-    int added = 0;
-    int updated = 0;
-    int failed = 0;
-    for (final obj in objects) {
-      final id = obj.objectId;
-      if (id == null) {
-        print(
-          'ParseObjectOffline.saveAllToLocalCache: skipping object without '
-          'objectId for $className',
-        );
-        continue;
+    await _withOfflineCacheLock(cacheKey, () async {
+      final Map<String, String> map = await _loadMap(store, cacheKey);
+      int added = 0;
+      int updated = 0;
+      int failed = 0;
+      for (final obj in objects) {
+        final id = obj.objectId;
+        if (id == null) {
+          if (isDebugEnabled()) {
+            print(
+              'ParseObjectOffline.saveAllToLocalCache: skipping object without '
+              'objectId for $className',
+            );
+          }
+          continue;
+        }
+        // Encode each object independently so one bad object (e.g. a value that
+        // fails to serialize) can't abort the whole batch and prevent every other
+        // item — including a freshly-added one — from being cached.
+        try {
+          final encoded = json.encode(obj.toJson(full: true));
+          map.containsKey(id) ? updated++ : added++;
+          map[id] = encoded;
+        } catch (e) {
+          failed++;
+          if (isDebugEnabled()) {
+            print(
+              'ParseObjectOffline.saveAllToLocalCache: skipping object $id '
+              '(createdAt=${obj.createdAt?.toIso8601String()}) for '
+              '$className — encode failed: $e',
+            );
+          }
+        }
       }
-      // Encode each object independently so one bad object (e.g. a value that
-      // fails to serialize) can't abort the whole batch and prevent every other
-      // item — including a freshly-added one — from being cached.
-      try {
-        final encoded = json.encode(obj.toJson(full: true));
-        map.containsKey(id) ? updated++ : added++;
-        map[id] = encoded;
-      } catch (e) {
-        failed++;
-        print(
-          'ParseObjectOffline.saveAllToLocalCache: skipping object $id '
-          '(createdAt=${obj.createdAt?.toIso8601String()}) for '
-          '$className — encode failed: $e',
-        );
-      }
-    }
 
-    await _saveMap(store, cacheKey, map);
-    print(
-      'ParseObjectOffline: batch saved to $className. '
-      'Added: $added, Updated: $updated, Failed: $failed, Total: ${map.length}',
-    );
+      await _saveMap(store, cacheKey, map);
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline: batch saved to $className. '
+          'Added: $added, Updated: $updated, Failed: $failed, '
+          'Total: ${map.length}',
+        );
+      }
+    });
   }
 
   /// Returns all cached objectIds for a class. O(1) — no JSON decoding.
@@ -177,9 +298,10 @@ extension ParseObjectOffline on ParseObject {
     String className,
   ) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map = await _loadMap(
-      store,
-      'offline_cache_$className',
+    final String cacheKey = _offlineCacheKey(className);
+    final Map<String, String> map = await _withOfflineCacheLock(
+      cacheKey,
+      () => _loadMap(store, cacheKey),
     );
     return map.keys.toList();
   }
@@ -190,37 +312,59 @@ extension ParseObjectOffline on ParseObject {
     String objectId,
   ) async {
     final CoreStore store = ParseCoreData().getStore();
-    final Map<String, String> map = await _loadMap(
-      store,
-      'offline_cache_$className',
+    final String cacheKey = _offlineCacheKey(className);
+    final Map<String, String> map = await _withOfflineCacheLock(
+      cacheKey,
+      () => _loadMap(store, cacheKey),
     );
     return map.containsKey(objectId);
   }
 
-  /// Wipes the entire cache for a class.
+  /// Wipes the entire cache for a class, in the current [cacheNamespace].
   static Future<void> clearLocalCacheForClass(String className) async {
     final CoreStore store = ParseCoreData().getStore();
-    final String cacheKey = 'offline_cache_$className';
-    // Remove BOTH formats. Reads and writes go through the `_v2` map key, so
-    // dropping only the legacy list key left the actual cache fully intact and
-    // made this a silent no-op.
-    await store.remove('${cacheKey}_v2');
-    await store.remove(cacheKey);
-    print('ParseObjectOffline: cleared cache for $className');
+    final String cacheKey = _offlineCacheKey(className);
+    await _withOfflineCacheLock(cacheKey, () async {
+      // Remove BOTH formats. Reads and writes go through the `_v2` map key, so
+      // dropping only the legacy list key left the actual cache fully intact
+      // and made this a silent no-op.
+      await store.remove('${cacheKey}_v2');
+      await store.remove(cacheKey);
+    });
+    if (isDebugEnabled()) {
+      print('ParseObjectOffline: cleared cache for $className');
+    }
   }
 
-  /// Sync: pushes every cached object to the server.
+  /// Wipes the cache of every [classNames] entry for the current
+  /// [cacheNamespace]. Call this on logout when cached data should not outlive
+  /// the session.
+  ///
+  /// The store has no key enumeration, so the classes to clear must be named.
+  static Future<void> clearLocalCacheForNamespace(
+    List<String> classNames,
+  ) async {
+    for (final String className in classNames) {
+      await clearLocalCacheForClass(className);
+    }
+  }
+
+  /// Pushes every cached object of [className] to the server.
   ///
   /// Only call this when you know the local copy is authoritative (e.g. after
   /// collecting edits while offline). Objects whose server version may be newer
   /// should be reconciled before calling this.
-  static Future<void> syncLocalCacheWithServer(
+  ///
+  /// Returns a [ParseOfflineSyncResult]; check [ParseOfflineSyncResult.hasFailures]
+  /// before treating the local edits as persisted.
+  static Future<ParseOfflineSyncResult> syncLocalCacheWithServer(
     String className, {
     bool Function(ParseObject obj)? shouldSync,
   }) async {
     final List<ParseObject> objects = await loadAllFromLocalCache(className);
     int synced = 0;
     int skipped = 0;
+    final List<ParseOfflineSyncFailure> failures = <ParseOfflineSyncFailure>[];
     for (final obj in objects) {
       if (shouldSync != null && !shouldSync(obj)) {
         skipped++;
@@ -230,15 +374,25 @@ extension ParseObjectOffline on ParseObject {
       if (response.success) {
         synced++;
       } else {
-        print(
-          'ParseObjectOffline.syncLocalCacheWithServer: failed to save '
-          '${obj.objectId} — ${response.error?.message}',
-        );
+        failures.add(ParseOfflineSyncFailure(obj, response.error));
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline.syncLocalCacheWithServer: failed to save '
+            '${obj.objectId} — ${response.error?.message}',
+          );
+        }
       }
     }
-    print(
-      'ParseObjectOffline: sync complete for $className. '
-      'Synced: $synced, Skipped: $skipped',
+    if (isDebugEnabled()) {
+      print(
+        'ParseObjectOffline: sync complete for $className. '
+        'Synced: $synced, Skipped: $skipped, Failed: ${failures.length}',
+      );
+    }
+    return ParseOfflineSyncResult(
+      synced: synced,
+      skipped: skipped,
+      failures: failures,
     );
   }
 
@@ -247,6 +401,9 @@ extension ParseObjectOffline on ParseObject {
   // The cache is stored as a single JSON-encoded Map<String, String> keyed by
   // objectId. This gives O(1) lookups and avoids scanning every entry for id
   // comparisons. The old format (List<String>) is migrated on first read.
+  //
+  // Callers must hold the key's lock via _withOfflineCacheLock: the migration
+  // branch writes.
   static Future<Map<String, String>> _loadMap(
     CoreStore store,
     String cacheKey,
@@ -275,10 +432,12 @@ extension ParseObjectOffline on ParseObject {
       // Write migrated data in new format and remove old list.
       await store.setString('${cacheKey}_v2', json.encode(migrated));
       await store.remove(cacheKey);
-      print(
-        'ParseObjectOffline: migrated ${migrated.length} entries from list '
-        'format to map format for $cacheKey',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline: migrated ${migrated.length} entries from list '
+          'format to map format for $cacheKey',
+        );
+      }
     }
     return migrated;
   }

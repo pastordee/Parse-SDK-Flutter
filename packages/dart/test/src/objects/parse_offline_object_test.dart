@@ -341,5 +341,168 @@ void main() {
         expect(ids, isEmpty);
       });
     });
+
+    group('legacy format migration', () {
+      test('migrates a List<String> cache and drops the legacy key', () async {
+        // Arrange: seed the pre-map format directly under the legacy key.
+        final store = ParseCoreData().getStore();
+        const legacyKey = 'offline_cache_$testClassName';
+        await store.setStringList(legacyKey, <String>[
+          '{"className":"$testClassName","objectId":"legacy1","name":"One"}',
+          '{"className":"$testClassName","objectId":"legacy2","name":"Two"}',
+        ]);
+
+        // Act
+        final loaded = await ParseObjectOffline.loadFromLocalCache(
+          testClassName,
+          'legacy1',
+        );
+
+        // Assert: the object survives the migration...
+        expect(loaded, isNotNull);
+        expect(loaded!.objectId, equals('legacy1'));
+        expect(loaded.get<String>('name'), equals('One'));
+
+        // ...the rest of the bucket came across too...
+        final all = await ParseObjectOffline.loadAllFromLocalCache(
+          testClassName,
+        );
+        expect(all.length, equals(2));
+
+        // ...and the legacy key is gone, so it migrates exactly once.
+        expect(await store.getStringList(legacyKey), isNull);
+        expect(await store.getString('${legacyKey}_v2'), isNotNull);
+      });
+    });
+
+    group('concurrent mutations', () {
+      test('concurrent saves of different ids all survive', () async {
+        // Every mutation is a read-modify-write of one map. Without
+        // per-key serialisation these interleave and the last writer wins,
+        // silently dropping the others.
+        final objects = List.generate(20, (i) {
+          return ParseObject(testClassName)
+            ..objectId = 'concurrent$i'
+            ..set('index', i);
+        });
+
+        // Act: fire them all off without awaiting in between.
+        await Future.wait(objects.map((o) => o.saveToLocalCache()));
+
+        // Assert
+        final ids = await ParseObjectOffline.getAllObjectIdsInLocalCache(
+          testClassName,
+        );
+        expect(ids.length, equals(20));
+        for (var i = 0; i < 20; i++) {
+          expect(ids, contains('concurrent$i'));
+        }
+      });
+
+      test('concurrent batch saves do not clobber each other', () async {
+        List<ParseObject> batch(String prefix) => List.generate(10, (i) {
+          return ParseObject(testClassName)
+            ..objectId = '$prefix$i'
+            ..set('index', i);
+        });
+
+        await Future.wait([
+          ParseObjectOffline.saveAllToLocalCache(testClassName, batch('a')),
+          ParseObjectOffline.saveAllToLocalCache(testClassName, batch('b')),
+          ParseObjectOffline.saveAllToLocalCache(testClassName, batch('c')),
+        ]);
+
+        final ids = await ParseObjectOffline.getAllObjectIdsInLocalCache(
+          testClassName,
+        );
+        expect(ids.length, equals(30));
+      });
+
+      test('concurrent save and remove leave a consistent cache', () async {
+        final keep = List.generate(10, (i) {
+          return ParseObject(testClassName)
+            ..objectId = 'keep$i'
+            ..set('index', i);
+        });
+        final doomed = ParseObject(testClassName)
+          ..objectId = 'doomed'
+          ..set('index', -1);
+        await ParseObjectOffline.saveAllToLocalCache(testClassName, [doomed]);
+
+        await Future.wait(<Future<void>>[
+          ...keep.map((o) => o.saveToLocalCache()),
+          doomed.removeFromLocalCache(),
+        ]);
+
+        final ids = await ParseObjectOffline.getAllObjectIdsInLocalCache(
+          testClassName,
+        );
+        expect(ids.length, equals(10));
+        expect(ids, isNot(contains('doomed')));
+      });
+    });
+
+    group('cacheNamespace', () {
+      tearDown(() async {
+        await ParseObjectOffline.clearLocalCacheForClass(testClassName);
+        ParseObjectOffline.cacheNamespace = null;
+        await ParseObjectOffline.clearLocalCacheForClass(testClassName);
+      });
+
+      test('separates the caches of two accounts', () async {
+        // Account A caches an object.
+        ParseObjectOffline.cacheNamespace = 'userA';
+        await (ParseObject(testClassName)
+              ..objectId = 'secretOfA'
+              ..set('name', 'A only'))
+            .saveToLocalCache();
+
+        // Switching account must not expose it.
+        ParseObjectOffline.cacheNamespace = 'userB';
+        expect(
+          await ParseObjectOffline.loadFromLocalCache(
+            testClassName,
+            'secretOfA',
+          ),
+          isNull,
+        );
+        expect(
+          await ParseObjectOffline.loadAllFromLocalCache(testClassName),
+          isEmpty,
+        );
+
+        // Switching back restores it.
+        ParseObjectOffline.cacheNamespace = 'userA';
+        final back = await ParseObjectOffline.loadFromLocalCache(
+          testClassName,
+          'secretOfA',
+        );
+        expect(back, isNotNull);
+        expect(back!.get<String>('name'), equals('A only'));
+
+        // Clearing one namespace leaves the other alone.
+        ParseObjectOffline.cacheNamespace = 'userB';
+        await (ParseObject(testClassName)..objectId = 'ofB').saveToLocalCache();
+        await ParseObjectOffline.clearLocalCacheForNamespace([testClassName]);
+        ParseObjectOffline.cacheNamespace = 'userA';
+        expect(
+          await ParseObjectOffline.loadAllFromLocalCache(testClassName),
+          hasLength(1),
+        );
+        await ParseObjectOffline.clearLocalCacheForClass(testClassName);
+      });
+
+      test('null namespace keeps the historic key layout', () async {
+        ParseObjectOffline.cacheNamespace = null;
+        await (ParseObject(
+          testClassName,
+        )..objectId = 'plain').saveToLocalCache();
+        final store = ParseCoreData().getStore();
+        expect(
+          await store.getString('offline_cache_${testClassName}_v2'),
+          isNotNull,
+        );
+      });
+    });
   });
 }

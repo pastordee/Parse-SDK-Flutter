@@ -43,14 +43,11 @@ class CoreStoreMemoryImp implements CoreStore {
     final value = _data[key];
     if (value == null) return null;
     if (value is List<String>) return value;
+    // A list that round-tripped through JSON comes back as List<dynamic>, so
+    // returning _data[key] directly threw a CastError instead of the list.
     if (value is Iterable) return value.map((e) => e.toString()).toList();
     return null;
   }
-
-  // @override
-  // Future<List<String>?> getStringList(String key) async {
-  //   return _data[key];
-  // }
 
   @override
   Future<dynamic> remove(String key) async {
