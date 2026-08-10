@@ -84,6 +84,18 @@ String _offlineCacheKey(String className) {
   return 'offline_cache_${Uri.encodeComponent(namespace)}:$className';
 }
 
+/// Storage key holding the map-format cache for [cacheKey].
+///
+/// ':' for the same reason as the namespace boundary: with the old
+/// `'${cacheKey}_v2'` a class genuinely named `X_v2` produced
+/// `offline_cache_X_v2`, which is the live map key of class `X`, so
+/// `clearLocalCacheForClass('X_v2')` wiped class `X`.
+String _offlineMapKey(String cacheKey) => '$cacheKey:v2';
+
+/// The superseded `_v2` suffix, still read once so existing caches migrate
+/// rather than silently emptying.
+String _legacyOfflineMapKey(String cacheKey) => '${cacheKey}_v2';
+
 extension ParseObjectOffline on ParseObject {
   /// Namespace applied to every offline cache key, for separating the caches
   /// of different accounts in the same app.
@@ -340,10 +352,11 @@ extension ParseObjectOffline on ParseObject {
     final CoreStore store = ParseCoreData().getStore();
     final String cacheKey = _offlineCacheKey(className);
     await _withOfflineCacheLock(cacheKey, () async {
-      // Remove BOTH formats. Reads and writes go through the `_v2` map key, so
+      // Remove EVERY format. Reads and writes go through the map key, so
       // dropping only the legacy list key left the actual cache fully intact
       // and made this a silent no-op.
-      await store.remove('${cacheKey}_v2');
+      await store.remove(_offlineMapKey(cacheKey));
+      await store.remove(_legacyOfflineMapKey(cacheKey));
       await store.remove(cacheKey);
     });
     if (isDebugEnabled()) {
@@ -376,7 +389,15 @@ extension ParseObjectOffline on ParseObject {
     String className, {
     bool Function(ParseObject obj)? shouldSync,
   }) async {
-    final List<ParseObject> objects = await loadAllFromLocalCache(className);
+    // Loaded via fromJsonForManualObject, NOT fromJson. `fromJson` only fills
+    // the object data and records nothing as unsaved, so for an object that
+    // already has an objectId `save()` finds `_isDirty(false)` false, never
+    // calls `update()`, and returns the `_saveChildren` result — success, with
+    // no request sent. This method would then report every object as synced
+    // while writing nothing, which is precisely the failure ParseOfflineSyncResult
+    // exists to surface. The manual variant registers the fields as unsaved
+    // changes so the update actually goes out.
+    final List<ParseObject> objects = await _loadAllForSync(className);
     int synced = 0;
     int skipped = 0;
     final List<ParseOfflineSyncFailure> failures = <ParseOfflineSyncFailure>[];
@@ -413,6 +434,38 @@ extension ParseObjectOffline on ParseObject {
 
   // ─── Internal helpers ────────────────────────────────────────────────────
 
+  /// Like [loadAllFromLocalCache], but decodes with `fromJsonForManualObject`
+  /// so every cached field is registered as an unsaved change and a later
+  /// `save()` actually issues an update. Only used by
+  /// [syncLocalCacheWithServer]; normal reads must not mark objects dirty.
+  static Future<List<ParseObject>> _loadAllForSync(String className) async {
+    final CoreStore store = ParseCoreData().getStore();
+    final String cacheKey = _offlineCacheKey(className);
+    final Map<String, String> map = await _withOfflineCacheLock(
+      cacheKey,
+      () => _loadMap(store, cacheKey),
+    );
+    final List<ParseObject> results = <ParseObject>[];
+    for (final entry in map.entries) {
+      try {
+        results.add(
+          ParseObject(className).fromJsonForManualObject(
+                json.decode(entry.value) as Map<String, dynamic>,
+              )
+              as ParseObject,
+        );
+      } catch (e) {
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline._loadAllForSync: skipping corrupt entry '
+            '${entry.key} for $className — $e',
+          );
+        }
+      }
+    }
+    return results;
+  }
+
   // The cache is stored as a single JSON-encoded Map<String, String> keyed by
   // objectId. This gives O(1) lookups and avoids scanning every entry for id
   // comparisons. The old format (List<String>) is migrated on first read.
@@ -423,12 +476,35 @@ extension ParseObjectOffline on ParseObject {
     CoreStore store,
     String cacheKey,
   ) async {
-    // Try new map format first.
-    final String? mapJson = await store.getString('${cacheKey}_v2');
+    // Try the current map key first.
+    final String? mapJson = await store.getString(_offlineMapKey(cacheKey));
     if (mapJson != null) {
       try {
         final decoded = json.decode(mapJson) as Map<String, dynamic>;
         return decoded.map((k, v) => MapEntry(k, v as String));
+      } catch (_) {}
+    }
+
+    // Then the superseded '_v2' suffix, moving it to the ':v2' key so this
+    // costs one read once rather than dropping an existing cache.
+    final String? legacyMapJson = await store.getString(
+      _legacyOfflineMapKey(cacheKey),
+    );
+    if (legacyMapJson != null) {
+      try {
+        final decoded = json.decode(legacyMapJson) as Map<String, dynamic>;
+        final Map<String, String> moved = decoded.map(
+          (k, v) => MapEntry(k, v as String),
+        );
+        await store.setString(_offlineMapKey(cacheKey), legacyMapJson);
+        await store.remove(_legacyOfflineMapKey(cacheKey));
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline: moved ${moved.length} entries from the _v2 '
+            'key to the :v2 key for $cacheKey',
+          );
+        }
+        return moved;
       } catch (_) {}
     }
 
@@ -445,7 +521,7 @@ extension ParseObjectOffline on ParseObject {
     }
     if (migrated.isNotEmpty) {
       // Write migrated data in new format and remove old list.
-      await store.setString('${cacheKey}_v2', json.encode(migrated));
+      await store.setString(_offlineMapKey(cacheKey), json.encode(migrated));
       await store.remove(cacheKey);
       if (isDebugEnabled()) {
         print(
@@ -462,6 +538,6 @@ extension ParseObjectOffline on ParseObject {
     String cacheKey,
     Map<String, String> map,
   ) async {
-    await store.setString('${cacheKey}_v2', json.encode(map));
+    await store.setString(_offlineMapKey(cacheKey), json.encode(map));
   }
 }
