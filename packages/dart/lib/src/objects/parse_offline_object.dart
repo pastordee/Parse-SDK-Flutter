@@ -71,9 +71,17 @@ Future<R> _withOfflineCacheLock<R>(
 
 String _offlineCacheKey(String className) {
   final String? namespace = ParseObjectOffline.cacheNamespace;
-  return namespace == null || namespace.isEmpty
-      ? 'offline_cache_$className'
-      : 'offline_cache_${namespace}_$className';
+  if (namespace == null || namespace.isEmpty) {
+    return 'offline_cache_$className';
+  }
+  // ':' as the separator, and the namespace percent-encoded. Joining with '_'
+  // was ambiguous, because class names legitimately contain underscores
+  // (_User, _Installation): namespace 'a_b' + class 'c' and namespace 'a' +
+  // class 'b_c' both produced 'offline_cache_a_b_c', so two accounts could
+  // land in one bucket — exactly what the namespace exists to prevent.
+  // Uri.encodeComponent escapes ':' (and '%'), and Parse class names cannot
+  // contain ':', so the two halves can never be confused.
+  return 'offline_cache_${Uri.encodeComponent(namespace)}:$className';
 }
 
 extension ParseObjectOffline on ParseObject {
@@ -150,7 +158,14 @@ extension ParseObjectOffline on ParseObject {
       try {
         final Map<String, dynamic> obj =
             json.decode(existing) as Map<String, dynamic>;
-        obj.addAll(updates);
+        // Cached entries are written as `json.encode(toJson(full: true))`, so
+        // they hold Parse wire format. Raw values (DateTime, ParseObject,
+        // ParseGeoPoint, nested Maps) would either fail to encode here or
+        // decode back differently from a server response, so run the caller's
+        // values through the same encoder first.
+        updates.forEach((String key, dynamic value) {
+          obj[key] = parseEncode(value, full: true);
+        });
         map[id] = json.encode(obj);
         await _saveMap(store, cacheKey, map);
         if (isDebugEnabled()) {
