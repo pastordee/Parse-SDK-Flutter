@@ -6,7 +6,6 @@ repository: https://github.com/parse-community/Parse-SDK-Flutter
 issue_tracker: https://github.com/parse-community/Parse-SDK-Flutter/issues
 documentation: https://docs.parseplatform.org/flutter/guide
 
-
 funding:
   - https://opencollective.com/parse-server
   - https://github.com/sponsors/parse-community
@@ -25,18 +24,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
 
   parse_server_sdk: ">=9.4.2 <10.0.0"
   # Uncomment for local testing
   #parse_server_sdk:
   #   path: ../dart
-
-  # parse_server_sdk:
-  #   git:
-  #     url: https://github.com/pastordee/Parse-SDK-Flutter.git 
-  #     path: packages/dart
-  #     ref: pc_server 
 
   # Networking
   connectivity_plus: ^7.0.0
@@ -60,10 +52,14 @@ dev_dependencies:
   path_provider_platform_interface: ^2.1.2
   plugin_platform_interface: ^2.1.8
 
+# TEMPORARY: this package uses APIs added to parse_server_sdk in this same PR
+# (the ParseObjectOffline extension and ParseLiveListElementSnapshot.isOptimistic),
+# which are not in any published version yet. The override lets CI resolve them
+# from the monorepo. Remove it once the dart package has been released with
+# those APIs and the constraint above has been bumped accordingly.
 dependency_overrides:
   parse_server_sdk:
     path: ../dart
-  
 
 screenshots:
   - description: Parse Platform logo.
