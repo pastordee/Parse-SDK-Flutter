@@ -342,6 +342,49 @@ void main() {
       });
     });
 
+    group('map key versioning', () {
+      test('a class named X_v2 does not collide with class X', () async {
+        // The map key used to be '${cacheKey}_v2', so class 'X_v2' produced
+        // offline_cache_X_v2 — the live map key of class 'X'. Clearing one
+        // therefore wiped the other.
+        await (ParseObject('X')..objectId = 'belongsToX').saveToLocalCache();
+        await (ParseObject(
+          'X_v2',
+        )..objectId = 'belongsToXv2').saveToLocalCache();
+
+        await ParseObjectOffline.clearLocalCacheForClass('X_v2');
+
+        final survivors = await ParseObjectOffline.loadAllFromLocalCache('X');
+        expect(
+          survivors.map((o) => o.objectId),
+          equals(['belongsToX']),
+          reason: 'clearing X_v2 must not touch class X',
+        );
+        await ParseObjectOffline.clearLocalCacheForClass('X');
+      });
+
+      test('an existing _v2 cache is moved to the new key', () async {
+        final store = ParseCoreData().getStore();
+        const base = 'offline_cache_$testClassName';
+        await store.setString(
+          '${base}_v2',
+          '{"old1":"{\\"className\\":\\"$testClassName\\",'
+              '\\"objectId\\":\\"old1\\",\\"name\\":\\"Legacy\\"}"}',
+        );
+
+        final loaded = await ParseObjectOffline.loadFromLocalCache(
+          testClassName,
+          'old1',
+        );
+        expect(loaded, isNotNull);
+        expect(loaded!.get<String>('name'), equals('Legacy'));
+
+        // Moved once, not read from the old key forever.
+        expect(await store.getString('$base:v2'), isNotNull);
+        expect(await store.getString('${base}_v2'), isNull);
+      });
+    });
+
     group('updateInLocalCache encoding', () {
       test('encodes raw values into Parse wire format', () async {
         final when = DateTime.utc(2026, 8, 10, 12, 30);
@@ -403,7 +446,7 @@ void main() {
 
         // ...and the legacy key is gone, so it migrates exactly once.
         expect(await store.getStringList(legacyKey), isNull);
-        expect(await store.getString('${legacyKey}_v2'), isNotNull);
+        expect(await store.getString('$legacyKey:v2'), isNotNull);
       });
     });
 
@@ -531,7 +574,7 @@ void main() {
         )..objectId = 'plain').saveToLocalCache();
         final store = ParseCoreData().getStore();
         expect(
-          await store.getString('offline_cache_${testClassName}_v2'),
+          await store.getString('offline_cache_$testClassName:v2'),
           isNotNull,
         );
       });

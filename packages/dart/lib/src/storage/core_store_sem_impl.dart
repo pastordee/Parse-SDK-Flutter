@@ -100,7 +100,8 @@ class CoreStoreSembastImp implements CoreStore {
   Future<List<String>?> getStringList(String key) async {
     final value = await get(key);
     if (value == null) return null;
-    if (value is List<String>) return value;
+    // Copy, so a caller mutating the result cannot reach into the store.
+    if (value is List<String>) return List<String>.of(value);
     // Sembast hands back List<dynamic> for anything it decoded from disk, so
     // the previous `await get(key)` as List<String> threw a CastError on every
     // list that had survived a restart.
