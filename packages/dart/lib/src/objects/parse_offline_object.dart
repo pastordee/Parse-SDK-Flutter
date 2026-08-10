@@ -9,15 +9,19 @@ extension ParseObjectOffline on ParseObject {
     final String cacheKey = 'offline_cache_$parseClassName';
     final Map<String, String> map = await _loadMap(store, cacheKey);
     if (objectId == null) {
-      print(
-        'ParseObjectOffline.saveToLocalCache: skipping object with no objectId '
-        'for $parseClassName',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline.saveToLocalCache: skipping object with no objectId '
+          'for $parseClassName',
+        );
+      }
       return;
     }
     map[objectId!] = json.encode(toJson(full: true));
     await _saveMap(store, cacheKey, map);
-    print('ParseObjectOffline: saved $objectId to cache for $parseClassName');
+    if (isDebugEnabled()) {
+      print('ParseObjectOffline: saved $objectId to cache for $parseClassName');
+    }
   }
 
   /// Remove this object from local storage.
@@ -28,9 +32,11 @@ extension ParseObjectOffline on ParseObject {
     final Map<String, String> map = await _loadMap(store, cacheKey);
     if (map.remove(objectId) != null) {
       await _saveMap(store, cacheKey, map);
-      print(
-        'ParseObjectOffline: removed $objectId from cache for $parseClassName',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline: removed $objectId from cache for $parseClassName',
+        );
+      }
     }
   }
 
@@ -50,12 +56,16 @@ extension ParseObjectOffline on ParseObject {
       obj.addAll(updates);
       map[objectId!] = json.encode(obj);
       await _saveMap(store, cacheKey, map);
-      print(
-        'ParseObjectOffline: updated $objectId in cache for $parseClassName',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline: updated $objectId in cache for $parseClassName',
+        );
+      }
       return true;
     } catch (e) {
-      print('ParseObjectOffline.updateInLocalCache: error for $objectId: $e');
+      if (isDebugEnabled()) {
+        print('ParseObjectOffline.updateInLocalCache: error for $objectId: $e');
+      }
       return false;
     }
   }
@@ -79,10 +89,12 @@ extension ParseObjectOffline on ParseObject {
         className,
       ).fromJson(json.decode(raw) as Map<String, dynamic>);
     } catch (e) {
-      print(
-        'ParseObjectOffline.loadFromLocalCache: corrupt entry for $objectId '
-        'in $className — $e',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline.loadFromLocalCache: corrupt entry for $objectId '
+          'in $className — $e',
+        );
+      }
       return null;
     }
   }
@@ -113,16 +125,20 @@ extension ParseObjectOffline on ParseObject {
           results.add(object);
         }
       } catch (e) {
-        print(
-          'ParseObjectOffline.loadAllFromLocalCache: skipping corrupt entry '
-          '${entry.key} for $className — $e',
-        );
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline.loadAllFromLocalCache: skipping corrupt entry '
+            '${entry.key} for $className — $e',
+          );
+        }
       }
     }
-    print(
-      'ParseObjectOffline: loaded ${results.length} objects from cache for '
-      '$className${where != null ? ' (filtered)' : ''}',
-    );
+    if (isDebugEnabled()) {
+      print(
+        'ParseObjectOffline: loaded ${results.length} objects from cache for '
+        '$className${where != null ? ' (filtered)' : ''}',
+      );
+    }
     return results;
   }
 
@@ -142,10 +158,12 @@ extension ParseObjectOffline on ParseObject {
     for (final obj in objects) {
       final id = obj.objectId;
       if (id == null) {
-        print(
-          'ParseObjectOffline.saveAllToLocalCache: skipping object without '
-          'objectId for $className',
-        );
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline.saveAllToLocalCache: skipping object without '
+            'objectId for $className',
+          );
+        }
         continue;
       }
       // Encode each object independently so one bad object (e.g. a value that
@@ -157,19 +175,23 @@ extension ParseObjectOffline on ParseObject {
         map[id] = encoded;
       } catch (e) {
         failed++;
-        print(
-          'ParseObjectOffline.saveAllToLocalCache: skipping object $id '
-          '(createdAt=${obj.createdAt?.toIso8601String()}) for '
-          '$className — encode failed: $e',
-        );
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline.saveAllToLocalCache: skipping object $id '
+            '(createdAt=${obj.createdAt?.toIso8601String()}) for '
+            '$className — encode failed: $e',
+          );
+        }
       }
     }
 
     await _saveMap(store, cacheKey, map);
-    print(
-      'ParseObjectOffline: batch saved to $className. '
-      'Added: $added, Updated: $updated, Failed: $failed, Total: ${map.length}',
-    );
+    if (isDebugEnabled()) {
+      print(
+        'ParseObjectOffline: batch saved to $className. '
+        'Added: $added, Updated: $updated, Failed: $failed, Total: ${map.length}',
+      );
+    }
   }
 
   /// Returns all cached objectIds for a class. O(1) — no JSON decoding.
@@ -206,7 +228,9 @@ extension ParseObjectOffline on ParseObject {
     // made this a silent no-op.
     await store.remove('${cacheKey}_v2');
     await store.remove(cacheKey);
-    print('ParseObjectOffline: cleared cache for $className');
+    if (isDebugEnabled()) {
+      print('ParseObjectOffline: cleared cache for $className');
+    }
   }
 
   /// Sync: pushes every cached object to the server.
@@ -230,16 +254,20 @@ extension ParseObjectOffline on ParseObject {
       if (response.success) {
         synced++;
       } else {
-        print(
-          'ParseObjectOffline.syncLocalCacheWithServer: failed to save '
-          '${obj.objectId} — ${response.error?.message}',
-        );
+        if (isDebugEnabled()) {
+          print(
+            'ParseObjectOffline.syncLocalCacheWithServer: failed to save '
+            '${obj.objectId} — ${response.error?.message}',
+          );
+        }
       }
     }
-    print(
-      'ParseObjectOffline: sync complete for $className. '
-      'Synced: $synced, Skipped: $skipped',
-    );
+    if (isDebugEnabled()) {
+      print(
+        'ParseObjectOffline: sync complete for $className. '
+        'Synced: $synced, Skipped: $skipped',
+      );
+    }
   }
 
   // ─── Internal helpers ────────────────────────────────────────────────────
@@ -275,10 +303,12 @@ extension ParseObjectOffline on ParseObject {
       // Write migrated data in new format and remove old list.
       await store.setString('${cacheKey}_v2', json.encode(migrated));
       await store.remove(cacheKey);
-      print(
-        'ParseObjectOffline: migrated ${migrated.length} entries from list '
-        'format to map format for $cacheKey',
-      );
+      if (isDebugEnabled()) {
+        print(
+          'ParseObjectOffline: migrated ${migrated.length} entries from list '
+          'format to map format for $cacheKey',
+        );
+      }
     }
     return migrated;
   }
