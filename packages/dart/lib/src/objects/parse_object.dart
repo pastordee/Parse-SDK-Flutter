@@ -885,8 +885,17 @@ class ParseObject extends ParseBase implements ParseCloneable {
       for (var element in listSaves) {
         // decode json
         dynamic object = json.decode(element);
+        // `fromJsonForManualObject`, NOT `fromJson`: the request body for a
+        // save is built from `_unsavedChanges` (`toJson(forApiRQ: true)`), and
+        // plain `fromJson` populates only `_objectData`. Restoring with it left
+        // every queued object with no unsaved changes, so each retry serialised
+        // to `{}` — which the server rejects, which marks the whole batch
+        // unsuccessful, which means the queue is never cleared and replays on
+        // every outgoing request for the life of the install.
         parseObjectList.add(
-          ParseObject(object[keyVarClassName]).fromJson(object),
+          ParseObject(
+            object[keyVarClassName],
+          ).fromJsonForManualObject(object),
         );
       }
 

@@ -72,5 +72,63 @@ void main() {
         expect(list2.length, 0);
       },
     );
+
+    test(
+      'should replay the queued object\'s fields, not an empty body',
+      () async {
+        // arrange
+        dietPlansObject.set('Fat', 15);
+
+        when(
+          client.post(
+            any,
+            options: anyNamed("options"),
+            data: anyNamed("data"),
+          ),
+        ).thenThrow(Exception('NetworkError'));
+
+        when(
+          client.post(
+            "$serverUrl/batch",
+            options: anyNamed("options"),
+            data: anyNamed("data"),
+          ),
+        ).thenAnswer(
+          (_) async => ParseNetworkResponse(
+            statusCode: 200,
+            data: jsonEncode([
+              {
+                "success": {"objectId": "abc123"},
+              },
+            ]),
+          ),
+        );
+
+        // act
+        await dietPlansObject.saveEventually();
+        await ParseObject.submitEventually(client: client);
+
+        // assert — the batch body must carry the field that was queued.
+        // Restoring the queued object with `fromJson` (rather than
+        // `fromJsonForManualObject`) leaves `_unsavedChanges` empty, so the
+        // request serialises to `{}` and the server rejects it forever.
+        final List<dynamic> captured = verify(
+          client.post(
+            "$serverUrl/batch",
+            options: anyNamed("options"),
+            data: captureAnyNamed("data"),
+          ),
+        ).captured;
+
+        expect(captured, isNotEmpty);
+        final Map<String, dynamic> batch =
+            jsonDecode(captured.last as String) as Map<String, dynamic>;
+        final Map<String, dynamic> body =
+            (batch['requests'] as List<dynamic>).first['body']
+                as Map<String, dynamic>;
+
+        expect(body['Fat'], 15);
+      },
+    );
   });
 }
