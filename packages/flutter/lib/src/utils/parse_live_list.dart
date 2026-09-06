@@ -162,6 +162,7 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
     this.pageSize = 100,
     this.nonPaginatedLimit = 1000,
     this.paginationLoadingElement,
+    this.headerBuilder,
     this.footerBuilder,
     this.loadMoreOffset = 200.0,
     this.preloadItemThreshold = 5,
@@ -201,6 +202,13 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
 
   final bool pagination;
   final Widget? paginationLoadingElement;
+  /// Built as the first row of the list, scrolling with the content.
+  ///
+  /// A sibling above the list would be pinned and would shrink the viewport,
+  /// which stops the list painting under a translucent app bar. As row zero it
+  /// scrolls away like anything else, and the list keeps the whole body.
+  final WidgetBuilder? headerBuilder;
+
   final FooterBuilder? footerBuilder;
   final double loadMoreOffset;
 
@@ -908,6 +916,7 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
         // Optimistic (pending) items merged ahead of the server-backed items.
         final List<T> optimistic = _visibleOptimisticItems();
         final int optCount = optimistic.length;
+        final int headerCount = widget.headerBuilder != null ? 1 : 0;
 
         // Determine loading state: only when online, the server list isn't ready
         // yet AND there's nothing cached OR optimistic to show. With
@@ -946,8 +955,14 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                     primary: widget.primary,
                     reverse: widget.reverse,
                     shrinkWrap: widget.shrinkWrap,
-                    itemCount: optCount + _items.length,
-                    itemBuilder: (context, index) {
+                    itemCount: headerCount + optCount + _items.length,
+                    itemBuilder: (context, rawIndex) {
+                      // Row zero is the caller's header, when there is one;
+                      // everything below counts from the row after it.
+                      if (headerCount == 1 && rawIndex == 0) {
+                        return widget.headerBuilder!(context);
+                      }
+                      final int index = rawIndex - headerCount;
                       // Index-based prefetch: start loading the next page as soon
                       // as an item within [preloadItemThreshold] of the end is
                       // built, so the user never scrolls into a blank/stutter
