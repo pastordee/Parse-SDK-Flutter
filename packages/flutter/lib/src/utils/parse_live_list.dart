@@ -21,6 +21,34 @@ enum LoadMoreStatus { idle, loading, noMoreData, error }
 typedef FooterBuilder =
     Widget Function(BuildContext context, LoadMoreStatus loadMoreStatus);
 
+/// Lays out a [ParseLiveSliverListWidget]'s rows as a sliver other than a
+/// [SliverList]. [itemBuilder] builds row [index] exactly as the default would
+/// and must be used for every row.
+typedef ParseLiveSliverLayoutBuilder =
+    Widget Function(
+      BuildContext context, {
+      required int itemCount,
+      required IndexedWidgetBuilder itemBuilder,
+    });
+
+/// Lays out a [ParseLiveListWidget]'s rows in something other than a single
+/// column — a grid or staggered columns, say.
+///
+/// [itemBuilder] builds row [index] exactly as the default list would,
+/// including the header at index 0 when [hasHeader], and must be used for
+/// every row so live updates and pagination keep working. Attach [controller]
+/// to the scroll view: the list pages from it.
+typedef ParseLiveListLayoutBuilder =
+    Widget Function(
+      BuildContext context, {
+      required int itemCount,
+      required IndexedWidgetBuilder itemBuilder,
+      required ScrollController controller,
+      required ScrollPhysics physics,
+      required bool hasHeader,
+      EdgeInsetsGeometry? padding,
+    });
+
 /// Removes stale entries from the offline cache after a fresh server load.
 ///
 /// Only runs for a SCOPED (has [cacheFilter]) + NON-paginated offline list: in
@@ -164,6 +192,7 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
     this.paginationLoadingElement,
     this.headerBuilder,
     this.footerBuilder,
+    this.layoutBuilder,
     this.loadMoreOffset = 200.0,
     this.preloadItemThreshold = 5,
     this.cacheSize = 50,
@@ -210,6 +239,10 @@ class ParseLiveListWidget<T extends sdk.ParseObject> extends StatefulWidget {
   final WidgetBuilder? headerBuilder;
 
   final FooterBuilder? footerBuilder;
+
+  /// Lays the rows out instead of the default single-column [ListView]. Null
+  /// keeps the list as it has always been.
+  final ParseLiveListLayoutBuilder? layoutBuilder;
   final double loadMoreOffset;
 
   /// How many items from the end of the list to begin prefetching the next page.
@@ -939,24 +972,18 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
             child: Column(
               children: [
                 Expanded(
-                  child: ListView.builder(
-                    // Default to bouncing overscroll so reaching either end of
-                    // the list springs back — a no-label "you're at the end"
-                    // signal (esp. after pagination stops). Callers can still
-                    // override via scrollPhysics.
-                    physics:
-                        widget.scrollPhysics ??
-                        const AlwaysScrollableScrollPhysics(
-                          parent: BouncingScrollPhysics(),
-                        ),
-                    controller: _scrollController, // Use the state's controller
-                    scrollDirection: widget.scrollDirection,
-                    padding: widget.padding,
-                    primary: widget.primary,
-                    reverse: widget.reverse,
-                    shrinkWrap: widget.shrinkWrap,
-                    itemCount: headerCount + optCount + _items.length,
-                    itemBuilder: (context, rawIndex) {
+                  child: Builder(builder: (context) {
+                  // Default to bouncing overscroll so reaching either end of
+                  // the list springs back — a no-label "you're at the end"
+                  // signal (esp. after pagination stops). Callers can still
+                  // override via scrollPhysics.
+                  final ScrollPhysics physics =
+                      widget.scrollPhysics ??
+                      const AlwaysScrollableScrollPhysics(
+                        parent: BouncingScrollPhysics(),
+                      );
+                  final int itemCount = headerCount + optCount + _items.length;
+                  Widget buildRow(BuildContext context, int rawIndex) {
                       // Row zero is the caller's header, when there is one;
                       // everything below counts from the row after it.
                       if (headerCount == 1 && rawIndex == 0) {
@@ -1034,8 +1061,31 @@ class _ParseLiveListWidgetState<T extends sdk.ParseObject>
                             ParseLiveListWidget.defaultChildBuilder,
                         index: index,
                       );
-                    },
-                  ),
+                  }
+
+                  if (widget.layoutBuilder != null) {
+                    return widget.layoutBuilder!(
+                      context,
+                      itemCount: itemCount,
+                      itemBuilder: buildRow,
+                      controller: _scrollController,
+                      physics: physics,
+                      hasHeader: headerCount == 1,
+                      padding: widget.padding,
+                    );
+                  }
+                  return ListView.builder(
+                    physics: physics,
+                    controller: _scrollController, // Use the state's controller
+                    scrollDirection: widget.scrollDirection,
+                    padding: widget.padding,
+                    primary: widget.primary,
+                    reverse: widget.reverse,
+                    shrinkWrap: widget.shrinkWrap,
+                    itemCount: itemCount,
+                    itemBuilder: buildRow,
+                  );
+                  }),
                 ),
                 // Show footer only if pagination is enabled and items exist
                 if (widget.pagination && _items.isNotEmpty)

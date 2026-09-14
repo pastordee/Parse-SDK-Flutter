@@ -41,6 +41,7 @@ class ParseLiveSliverListWidget<T extends sdk.ParseObject>
     this.nonPaginatedLimit = 1000,
     this.paginationLoadingElement,
     this.footerBuilder,
+    this.layoutBuilder,
     this.preloadItemThreshold = 5,
     this.cacheSize = 50,
     this.offlineMode = false,
@@ -70,6 +71,11 @@ class ParseLiveSliverListWidget<T extends sdk.ParseObject>
   final bool pagination;
   final Widget? paginationLoadingElement;
   final FooterBuilder? footerBuilder;
+
+  /// Lays the rows out as a sliver other than the default [SliverList] — a
+  /// staggered grid, say. It must build every row with the [itemBuilder] it is
+  /// given, so live updates and pagination keep working. Null keeps the list.
+  final ParseLiveSliverLayoutBuilder? layoutBuilder;
 
   /// How many items from the end of the list to begin prefetching the next page.
   /// Index-based (item-height-independent) so infinite scroll stays smooth: as
@@ -750,8 +756,7 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
                   ),
                 );
         } else {
-          return SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
+          Widget buildRow(BuildContext context, int index) {
               // Index-based prefetch: start loading the next page as soon as an
               // item within [preloadItemThreshold] of the end is built, so the
               // user never scrolls into a blank/stutter waiting for the next
@@ -817,7 +822,18 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
                     ParseLiveSliverListWidget.defaultChildBuilder,
                 index: index,
               );
-            }, childCount: optCount + _items.length),
+          }
+
+          final int itemCount = optCount + _items.length;
+          if (widget.layoutBuilder != null) {
+            return widget.layoutBuilder!(
+              context,
+              itemCount: itemCount,
+              itemBuilder: buildRow,
+            );
+          }
+          return SliverList(
+            delegate: SliverChildBuilderDelegate(buildRow, childCount: itemCount),
           );
         }
       },
