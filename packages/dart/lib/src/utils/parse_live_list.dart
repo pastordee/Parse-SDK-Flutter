@@ -202,10 +202,22 @@ class ParseLiveList<T extends ParseObject> {
     return await query.query<T>();
   }
 
+  /// Whether the initial server query succeeded.
+  ///
+  /// A failed query is NOT an empty result, but it used to look exactly like
+  /// one: [_init] swallowed the failure and left the list empty. The offline
+  /// widgets then replaced their cached rows with that nothing — and pruned
+  /// the local cache down to it — so an offline launch blanked every list and
+  /// could delete what was saved on the device. Check this before treating
+  /// the list as the server's answer.
+  bool get loadSucceeded => _loadSucceeded;
+  bool _loadSucceeded = false;
+
   Future<void> _init() async {
     _eventStreamController = StreamController<ParseLiveListEvent<T>>();
 
     final ParseResponse parseResponse = await _runQuery();
+    _loadSucceeded = parseResponse.success;
     if (parseResponse.success) {
       // Determine if fields were actually restricted in the query
       // Only mark as not loaded if lazy loading AND we actually restricted fields

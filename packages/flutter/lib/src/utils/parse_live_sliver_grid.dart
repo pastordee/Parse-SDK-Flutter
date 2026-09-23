@@ -492,6 +492,19 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
             : widget.preloadedColumns,
       );
 
+      // A failed server load is not an empty result. Keep the cached rows on
+      // screen and leave the cache alone — swapping in "nothing" blanked the
+      // list offline, and the prune below then deleted the cache to match.
+      if (!originalLiveGrid.loadSucceeded) {
+        debugPrint(
+          '$connectivityLogPrefix Server load failed; keeping ${_items.length} cached items.',
+        );
+        originalLiveGrid.dispose();
+        _noDataNotifier.value = _items.isEmpty;
+        if (mounted) setState(() {});
+        return;
+      }
+
       final liveGrid = CachedParseLiveList<T>(
         originalLiveGrid,
         widget.cacheSize,

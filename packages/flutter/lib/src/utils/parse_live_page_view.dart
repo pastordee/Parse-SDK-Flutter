@@ -351,6 +351,19 @@ class _ParseLiveListPageViewState<T extends sdk.ParseObject>
             : widget.preloadedColumns,
       );
 
+      // A failed server load is not an empty result. Keep the cached rows on
+      // screen and leave the cache alone — swapping in "nothing" blanked the
+      // list offline, and the prune below then deleted the cache to match.
+      if (!originalLiveList.loadSucceeded) {
+        debugPrint(
+          '$connectivityLogPrefix Server load failed; keeping ${_items.length} cached items.',
+        );
+        originalLiveList.dispose();
+        _noDataNotifier.value = _items.isEmpty;
+        if (mounted) setState(() {});
+        return;
+      }
+
       final liveList = CachedParseLiveList<T>(
         originalLiveList,
         widget.cacheSize,
