@@ -777,7 +777,10 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
               // setState.
               if (widget.pagination &&
                   _hasMoreData &&
-                  _loadMoreStatus != LoadMoreStatus.loading &&
+                  // Idle only, not merely "not loading": after a failed page the status is
+                  // error, and prefetching from error re-failed on every rebuild — 465
+                  // requests in two seconds offline. A user scroll can still retry.
+                  _loadMoreStatus == LoadMoreStatus.idle &&
                   index >=
                       (optCount + _items.length) -
                           widget.preloadItemThreshold) {
