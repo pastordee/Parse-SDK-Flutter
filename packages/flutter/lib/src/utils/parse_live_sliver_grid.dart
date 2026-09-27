@@ -393,6 +393,9 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
         ..setLimit(widget.pageSize);
 
       final parseResponse = await nextPageQuery.query();
+      // The grid can leave the screen while a page loads; setState on a
+      // disposed State throws ("Null check operator" in profile/release).
+      if (!mounted) return;
 
       if (parseResponse.success) {
         // Success at the end of the list is "no more data" (handled below),
@@ -434,6 +437,7 @@ class ParseLiveSliverGridWidgetState<T extends sdk.ParseObject>
       }
     } catch (e) {
       debugPrint('$connectivityLogPrefix Error loading more grid data: $e');
+      if (!mounted) return;
       setState(() {
         _loadMoreStatus = LoadMoreStatus.error;
       });

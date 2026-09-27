@@ -661,6 +661,11 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
         ..setLimit(widget.pageSize);
 
       final parseResponse = await nextPageQuery.query();
+      // The list can leave the screen while a page loads. setState on a
+      // disposed State throws — in profile/release as "Null check operator
+      // used on a null value" — and the catch below then threw again,
+      // unhandled, every time a last page came back empty.
+      if (!mounted) return;
 
       if (parseResponse.success) {
         // Success at the end of the list is "no more data" (handled below),
@@ -702,6 +707,7 @@ class ParseLiveSliverListWidgetState<T extends sdk.ParseObject>
       }
     } catch (e) {
       debugPrint('$connectivityLogPrefix Error loading more data: $e');
+      if (!mounted) return;
       setState(() {
         _loadMoreStatus = LoadMoreStatus.error;
       });
