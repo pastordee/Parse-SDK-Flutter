@@ -329,7 +329,11 @@ class ParseLiveList<T extends ParseObject> {
                     }
                   }
                   if (!stillInList) {
-                    _objectDeleted(currentObject as T);
+                    // Awaited: it removes the element only after its own
+                    // await, so without it `i--` revisits the same element
+                    // and this loop never ends — the app froze on resume
+                    // whenever a row had gone while LiveQuery was away.
+                    await _objectDeleted(currentObject as T);
                     i--;
                   }
                 }
